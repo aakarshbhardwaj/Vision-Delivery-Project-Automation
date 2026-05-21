@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VG · Work Item Detail</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg:#0d0f18; --surface:#141824; --surface2:#1a1f30; --surface3:#202538;
+  --border:#262d42; --accent:#4f8ef7; --accent2:#7c5cbf;
+  --text:#dde2f0; --muted:#7a8399;
+  --danger:#e05252; --warn:#e09a40; --success:#4caf7d;
+  --font:'Segoe UI',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;min-height:100vh}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.hdr{height:54px;background:var(--surface);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 20px;gap:12px;position:sticky;top:0;z-index:50}
+.hdr-logo{font-size:16px;font-weight:800;letter-spacing:.06em;color:var(--accent);flex-shrink:0}
+.hdr-div{width:1px;height:20px;background:var(--border)}
+.back-btn{display:flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);
+  color:var(--muted);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;
+  font-family:var(--font);transition:all .15s;text-decoration:none}
+.back-btn:hover{border-color:var(--accent);color:var(--accent)}
+.breadcrumb{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);overflow:hidden}
+.bc-item{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+.bc-item a{color:var(--accent);text-decoration:none}
+.bc-item a:hover{text-decoration:underline}
+.bc-sep{color:var(--border);flex-shrink:0}
+.bc-current{color:var(--text);font-weight:600}
+.hdr-r{margin-left:auto;display:flex;align-items:center;gap:12px}
+.hdr-time{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.ado-link{display:flex;align-items:center;gap:5px;background:rgba(79,142,247,.1);
+  border:1px solid rgba(79,142,247,.25);color:var(--accent);border-radius:6px;
+  padding:5px 11px;font-size:11px;text-decoration:none;transition:all .15s;white-space:nowrap}
+.ado-link:hover{background:rgba(79,142,247,.2)}
+
+/* ── Loading ─────────────────────────────────────────────────────────────── */
+.loading-wrap{display:none;position:fixed;inset:0;background:rgba(13,15,24,.8);
+  z-index:200;align-items:center;justify-content:center;flex-direction:column;gap:14px}
+.loading-wrap.show{display:flex}
+.spinner{width:38px;height:38px;border:3px solid var(--border);
+  border-top-color:var(--accent);border-radius:50%;animation:spin .75s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-msg{font-size:13px;color:var(--muted)}
+
+/* ── Error ───────────────────────────────────────────────────────────────── */
+.error-wrap{display:none;flex-direction:column;align-items:center;justify-content:center;
+  min-height:60vh;gap:12px;color:var(--muted)}
+.error-wrap.show{display:flex}
+.error-icon{font-size:48px;opacity:.3}
+.error-title{font-size:18px;font-weight:600;color:var(--danger)}
+.error-msg{font-size:13px;max-width:400px;text-align:center;line-height:1.6}
+
+/* ── Page body ───────────────────────────────────────────────────────────── */
+#page{display:none;flex-direction:column;gap:20px;padding:24px 28px;max-width:1400px;margin:0 auto}
+#page.show{display:flex}
+
+/* ── Hero ────────────────────────────────────────────────────────────────── */
+.hero{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:22px 24px}
+.hero-meta{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.wi-id{font-size:13px;font-weight:700;font-family:monospace;color:var(--muted)}
+.hero-title{font-size:22px;font-weight:700;color:var(--text);line-height:1.35;margin-bottom:12px}
+.hero-badges{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+/* ── KPI strip ───────────────────────────────────────────────────────────── */
+.kpi-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;text-align:center}
+.kpi.accent-border{border-color:rgba(79,142,247,.4)}
+.kpi.success-border{border-color:rgba(76,175,125,.4)}
+.kpi.warn-border{border-color:rgba(224,154,64,.4)}
+.kpi-val{font-size:26px;font-weight:700;color:var(--accent);line-height:1}
+.kpi.success-border .kpi-val{color:var(--success)}
+.kpi.warn-border .kpi-val{color:var(--warn)}
+.kpi-lbl{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:5px}
+
+/* ── Progress bar ────────────────────────────────────────────────────────── */
+.progress-section{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 20px}
+.prog-label{display:flex;justify-content:space-between;margin-bottom:8px;font-size:12px;color:var(--muted)}
+.prog-bar{height:10px;background:var(--surface3);border-radius:6px;overflow:hidden}
+.prog-fill{height:100%;border-radius:6px;transition:width .6s ease;background:linear-gradient(90deg,#4f8ef7,#00e676)}
+
+/* ── Info grid ───────────────────────────────────────────────────────────── */
+.info-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.info-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.info-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:5px}
+.info-val{font-size:13px;color:var(--text);word-break:break-word}
+.info-val.muted{color:var(--muted)}
+
+/* ── Tags ────────────────────────────────────────────────────────────────── */
+.tags-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.tag-pill{display:inline-block;padding:3px 10px;border-radius:14px;font-size:11px;
+  background:rgba(79,142,247,.1);border:1px solid rgba(79,142,247,.25);color:var(--accent)}
+
+/* ── Section ─────────────────────────────────────────────────────────────── */
+.section{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.section-hdr{padding:12px 16px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:10px}
+.section-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.section-count{background:var(--surface2);border:1px solid var(--border);
+  border-radius:10px;padding:2px 8px;font-size:11px;color:var(--muted)}
+.section-effort{margin-left:auto;font-size:11px;color:var(--muted)}
+
+/* ── Children table ──────────────────────────────────────────────────────── */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:var(--surface2);color:var(--muted);font-size:10px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.07em;padding:10px 12px;text-align:left;
+  border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none}
+th:hover{color:var(--text)}
+th .si{opacity:.35;margin-left:4px}
+th.sorted .si{opacity:1;color:var(--accent)}
+td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.03);vertical-align:middle}
+tr.clickable{cursor:pointer;transition:background .1s}
+tr.clickable:hover td{background:rgba(79,142,247,.06)}
+tr:last-child td{border-bottom:none}
+.id-chip{font-family:monospace;font-size:11px;font-weight:700;color:var(--accent);
+  text-decoration:none;display:inline-flex;align-items:center;gap:4px}
+.id-chip:hover{text-decoration:underline}
+.title-cell{max-width:340px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.mini-bar-wrap{display:flex;align-items:center;gap:6px}
+.mini-bar{flex:1;height:5px;background:var(--surface3);border-radius:3px;overflow:hidden;min-width:60px}
+.mini-bar-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#4f8ef7,#00e676)}
+.mini-pct{font-size:10px;color:var(--muted);white-space:nowrap;min-width:30px;text-align:right}
+
+/* ── Badges ──────────────────────────────────────────────────────────────── */
+.badge{display:inline-flex;align-items:center;font-size:10px;font-weight:700;
+  padding:2px 8px;border-radius:10px;white-space:nowrap}
+.sev-1{background:rgba(224,82,82,.16);color:#f08080;border:1px solid rgba(224,82,82,.35)}
+.sev-2{background:rgba(224,154,64,.16);color:#f0b060;border:1px solid rgba(224,154,64,.35)}
+.sev-3{background:rgba(79,142,247,.13);color:#80b0f0;border:1px solid rgba(79,142,247,.28)}
+.sev-4{background:rgba(130,140,168,.1);color:var(--muted);border:1px solid var(--border)}
+.st-active{background:rgba(76,175,125,.13);color:#7dd6a4;border:1px solid rgba(76,175,125,.28)}
+.st-new{background:rgba(79,142,247,.11);color:#80b0f0;border:1px solid rgba(79,142,247,.25)}
+.st-pending{background:rgba(224,154,64,.13);color:#f0b060;border:1px solid rgba(224,154,64,.28)}
+.st-closed{background:rgba(130,140,168,.08);color:var(--muted);border:1px solid var(--border)}
+.st-inprog{background:rgba(124,92,191,.13);color:#c090f0;border:1px solid rgba(124,92,191,.28)}
+.st-qa{background:rgba(0,180,240,.13);color:#60d0f0;border:1px solid rgba(0,180,240,.28)}
+.tp-bug{background:rgba(224,82,82,.11);color:#f08080;border:1px solid rgba(224,82,82,.25)}
+.tp-story{background:rgba(124,92,191,.13);color:#b090f0;border:1px solid rgba(124,92,191,.28)}
+.tp-task{background:rgba(76,175,125,.1);color:#7dd6a4;border:1px solid rgba(76,175,125,.22)}
+.tp-feat{background:rgba(79,142,247,.11);color:#80b0f0;border:1px solid rgba(79,142,247,.25)}
+.tp-other{background:rgba(130,140,168,.08);color:var(--muted);border:1px solid var(--border)}
+
+/* ── Timeline ────────────────────────────────────────────────────────────── */
+.timeline{display:flex;gap:0;overflow:hidden}
+.tl-item{flex:1;padding:12px 16px;border-right:1px solid var(--border);last:border:none}
+.tl-item:last-child{border-right:none}
+.tl-lbl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:4px}
+.tl-val{font-size:12px;color:var(--text)}
+.tl-val.dim{color:var(--muted)}
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+
+/* ── Search ──────────────────────────────────────────────────────────────── */
+.tbl-toolbar{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.tbl-search{background:var(--surface2);border:1px solid var(--border);color:var(--text);
+  border-radius:6px;padding:7px 12px;font-size:12px;font-family:var(--font);outline:none;width:220px}
+.tbl-search:focus{border-color:var(--accent)}
+.tbl-search::placeholder{color:var(--muted)}
+.tbl-info{margin-left:auto;font-size:11px;color:var(--muted)}
+
+footer{padding:24px 28px;color:var(--muted);font-size:11px;text-align:center;
+  border-top:1px solid var(--border);margin-top:8px}
+</style>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div class="loading-wrap" id="loading">
+  <div class="spinner"></div>
+  <div class="loading-msg">Loading work item…</div>
+</div>
+
+<!-- Header -->
+<div class="hdr">
+  <span class="hdr-logo">VG</span>
+  <span class="hdr-div"></span>
+  <a class="back-btn" href="/" onclick="goBack(event)">&#8592; Dashboard</a>
+  <div class="breadcrumb" id="breadcrumb"></div>
+  <div class="hdr-r">
+    <span class="hdr-time" id="hdr-time"></span>
+    <a class="ado-link" id="ado-link" href="#" target="_blank" rel="noopener">Open in ADO ↗</a>
+  </div>
+</div>
+
+<!-- Error -->
+<div class="error-wrap" id="error-wrap">
+  <div class="error-icon">⚠</div>
+  <div class="error-title">Failed to load</div>
+  <div class="error-msg" id="error-msg"></div>
+</div>
+
+<!-- Page content -->
+<div id="page">
+
+  <!-- Hero -->
+  <div class="hero">
+    <div class="hero-meta">
+      <span class="badge tp-feat" id="hero-type">—</span>
+      <span class="wi-id" id="hero-id">—</span>
+    </div>
+    <div class="hero-title" id="hero-title">Loading…</div>
+    <div class="hero-badges" id="hero-badges"></div>
+  </div>
+
+  <!-- KPIs -->
+  <div class="kpi-strip" id="kpi-strip">
+    <div class="kpi accent-border">
+      <div class="kpi-val" id="kpi-est">—</div>
+      <div class="kpi-lbl">Estimated (h)</div>
+    </div>
+    <div class="kpi success-border">
+      <div class="kpi-val" id="kpi-comp">—</div>
+      <div class="kpi-lbl">Completed (h)</div>
+    </div>
+    <div class="kpi warn-border">
+      <div class="kpi-val" id="kpi-rem">—</div>
+      <div class="kpi-lbl">Remaining (h)</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-val" id="kpi-pct">—</div>
+      <div class="kpi-lbl">Done %</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-val" id="kpi-children">—</div>
+      <div class="kpi-lbl">Child Items</div>
+    </div>
+  </div>
+
+  <!-- Progress bar -->
+  <div class="progress-section">
+    <div class="prog-label">
+      <span>Effort Progress</span>
+      <span id="prog-text">—</span>
+    </div>
+    <div class="prog-bar"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
+  </div>
+
+  <!-- Info grid -->
+  <div class="info-grid" id="info-grid"></div>
+
+  <!-- Tags -->
+  <div class="section" id="tags-section" style="display:none">
+    <div class="section-hdr"><span class="section-title">Tags</span></div>
+    <div style="padding:14px 16px"><div class="tags-row" id="tags-row"></div></div>
+  </div>
+
+  <!-- Timeline -->
+  <div class="section">
+    <div class="section-hdr"><span class="section-title">Timeline</span></div>
+    <div class="timeline" id="timeline"></div>
+  </div>
+
+  <!-- Children -->
+  <div class="section" id="children-section" style="display:none">
+    <div class="section-hdr">
+      <span class="section-title">Child Items</span>
+      <span class="section-count" id="child-count">0</span>
+      <span class="section-effort" id="child-effort"></span>
+    </div>
+    <div class="tbl-toolbar">
+      <input class="tbl-search" type="text" placeholder="Filter children…" oninput="filterChildren(this.value)" id="child-search">
+      <div class="tbl-info" id="child-tbl-info"></div>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th onclick="sortChildren('id')">ID <span class="si">↕</span></th>
+            <th onclick="sortChildren('type')">Type <span class="si">↕</span></th>
+            <th onclick="sortChildren('state')">State <span class="si">↕</span></th>
+            <th onclick="sortChildren('severity')">Severity <span class="si">↕</span></th>
+            <th>Title</th>
+            <th onclick="sortChildren('assignedTo')">Assigned To <span class="si">↕</span></th>
+            <th onclick="sortChildren('estimate')" class="num">Est (h) <span class="si">↕</span></th>
+            <th onclick="sortChildren('completed')" class="num">Done (h) <span class="si">↕</span></th>
+            <th onclick="sortChildren('remaining')" class="num">Rem (h) <span class="si">↕</span></th>
+            <th>Progress</th>
+          </tr>
+        </thead>
+        <tbody id="child-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /page -->
+
+<footer>VG · IR Delivery Automation · Azure DevOps Dashboard</footer>
+
+<script>
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const SEV_CLS = {'1 - Critical':'sev-1','2 - High':'sev-2','3 - Medium':'sev-3','4 - Low':'sev-4'};
+const SEV_LBL = {'1 - Critical':'Critical','2 - High':'High','3 - Medium':'Medium','4 - Low':'Low'};
+const TP_CLS  = {'Bug':'tp-bug','User Story':'tp-story','Task':'tp-task','Feature':'tp-feat'};
+const ST_MAP  = {
+  'Active':'st-active','New':'st-new','Estimate Pending':'st-pending',
+  'Closed':'st-closed','Resolved':'st-closed','Removed':'st-closed',
+  'In Progress':'st-inprog','In QA':'st-qa','Ready for QA':'st-qa',
+  'In-Progress':'st-inprog',
+};
+
+function badge(text, clsMap, lblMap) {
+  const cls = clsMap[text] || 'tp-other';
+  const lbl = lblMap ? (lblMap[text] || text || '—') : (text || '—');
+  return `<span class="badge ${cls}">${esc(lbl)}</span>`;
+}
+
+function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric',timeZone:'Asia/Kolkata'});
+}
+
+function fmtNum(n) { return n ? parseFloat(n).toFixed(1) : '0.0'; }
+
+function pct(comp, est) {
+  if (!est || est <= 0) return comp > 0 ? 100 : 0;
+  return Math.min(100, Math.round((comp / est) * 100));
+}
+
+function tickClock() {
+  const now = new Date().toLocaleString('en-IN',{
+    timeZone:'Asia/Kolkata',hour12:false,
+    day:'2-digit',month:'short',year:'numeric',
+    hour:'2-digit',minute:'2-digit',second:'2-digit',
+  });
+  document.getElementById('hdr-time').textContent = now + ' IST';
+}
+
+function goBack(e) {
+  e && e.preventDefault();
+  if (history.length > 1) { history.back(); } else { location.href = '/'; }
+}
+
+// ── Data & sort state ─────────────────────────────────────────────────────────
+let allChildren = [];
+let visChildren = [];
+let sortCol = 'id';
+let sortAsc  = true;
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+async function init() {
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  const params = new URLSearchParams(location.search);
+  const id = parseInt(params.get('id'));
+  if (!id) {
+    showError('No work item ID specified. Use ?id=XXXXX in the URL.');
+    return;
+  }
+
+  document.getElementById('loading').classList.add('show');
+  try {
+    const data = await fetch(`/api/workitem?id=${id}`).then(r => r.json());
+    if (data.error) throw new Error(data.error);
+    document.getElementById('loading').classList.remove('show');
+    render(data);
+  } catch(e) {
+    document.getElementById('loading').classList.remove('show');
+    showError(e.message);
+  }
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render({ item, children, parent }) {
+  document.title = `#${item.id} — ${item.title.slice(0,50)} · VG`;
+
+  // ADO link
+  document.getElementById('ado-link').href = item.adoUrl;
+
+  // Breadcrumb
+  const bc = document.getElementById('breadcrumb');
+  let bcHtml = `<span class="bc-item"><a href="/">Dashboard</a></span>`;
+  if (parent) {
+    bcHtml += `<span class="bc-sep">›</span>
+      <span class="bc-item"><a href="/detail?id=${parent.id}">#${parent.id} ${esc(parent.title.slice(0,40))}</a></span>`;
+  }
+  bcHtml += `<span class="bc-sep">›</span>
+    <span class="bc-item bc-current">#${item.id}</span>`;
+  bc.innerHTML = bcHtml;
+
+  // Hero
+  document.getElementById('hero-type').className = `badge ${TP_CLS[item.type]||'tp-other'}`;
+  document.getElementById('hero-type').textContent = item.type || '—';
+  document.getElementById('hero-id').textContent = `#${item.id}`;
+  document.getElementById('hero-title').textContent = item.title || '—';
+
+  const badgesEl = document.getElementById('hero-badges');
+  badgesEl.innerHTML = [
+    badge(item.state,    ST_MAP,  null),
+    badge(item.severity, SEV_CLS, SEV_LBL),
+    item.priority ? `<span class="badge tp-other">P${item.priority}</span>` : '',
+    item.assignedTo ? `<span style="font-size:12px;color:var(--muted)">👤 ${esc(item.assignedTo)}</span>` : '',
+  ].filter(Boolean).join('');
+
+  // KPIs — from item's own effort (or rolled up from children if item has none)
+  let est  = parseFloat(item.estimate || 0);
+  let comp = parseFloat(item.completed || 0);
+  let rem  = parseFloat(item.remaining || 0);
+  if (est === 0 && children.length) {
+    // Roll up from children
+    est  = children.reduce((a,c)=>a+parseFloat(c.estimate||0),  0);
+    comp = children.reduce((a,c)=>a+parseFloat(c.completed||0), 0);
+    rem  = children.reduce((a,c)=>a+parseFloat(c.remaining||0), 0);
+  }
+  const donePct = pct(comp, est);
+
+  document.getElementById('kpi-est').textContent      = fmtNum(est);
+  document.getElementById('kpi-comp').textContent     = fmtNum(comp);
+  document.getElementById('kpi-rem').textContent      = fmtNum(rem);
+  document.getElementById('kpi-pct').textContent      = donePct + '%';
+  document.getElementById('kpi-children').textContent = children.length;
+
+  // Progress bar
+  document.getElementById('prog-fill').style.width = donePct + '%';
+  document.getElementById('prog-text').textContent  =
+    `${fmtNum(comp)}h done of ${fmtNum(est)}h estimated`;
+
+  // Info grid
+  const sprint = (item.iterationPath||'').split('\\').pop() || '—';
+  const area   = (item.areaPath||'').split('\\').pop() || '—';
+  const infoItems = [
+    { lbl: 'Assigned To',    val: item.assignedTo || '—' },
+    { lbl: 'Sprint',         val: sprint },
+    { lbl: 'Area',           val: area },
+    { lbl: 'Priority',       val: item.priority ? `P${item.priority}` : '—' },
+    { lbl: 'Severity',       val: item.severity || '—' },
+  ];
+  document.getElementById('info-grid').innerHTML = infoItems.map(i =>
+    `<div class="info-card">
+      <div class="info-lbl">${i.lbl}</div>
+      <div class="info-val${i.val==='—'?' muted':''}">${esc(i.val)}</div>
+    </div>`).join('');
+
+  // Tags
+  if (item.tags) {
+    const tags = item.tags.split(';').map(t=>t.trim()).filter(Boolean);
+    if (tags.length) {
+      document.getElementById('tags-section').style.display = '';
+      document.getElementById('tags-row').innerHTML = tags.map(t =>
+        `<span class="tag-pill">${esc(t)}</span>`).join('');
+    }
+  }
+
+  // Timeline
+  const tl = [
+    { lbl:'Created',   val: fmtDate(item.createdDate)   },
+    { lbl:'Activated', val: fmtDate(item.activatedDate) },
+    { lbl:'Resolved',  val: fmtDate(item.resolvedDate)  },
+    { lbl:'Closed',    val: fmtDate(item.closedDate)    },
+    { lbl:'Last Changed', val: fmtDate(item.changedDate) },
+  ];
+  document.getElementById('timeline').innerHTML = tl.map(t =>
+    `<div class="tl-item">
+      <div class="tl-lbl">${t.lbl}</div>
+      <div class="tl-val${t.val==='—'?' dim':''}">${t.val}</div>
+    </div>`).join('');
+
+  // Children table
+  if (children.length) {
+    allChildren = children;
+    visChildren = [...children];
+    document.getElementById('children-section').style.display = '';
+    document.getElementById('child-count').textContent = children.length;
+
+    const totEst  = children.reduce((a,c)=>a+parseFloat(c.estimate||0),  0);
+    const totComp = children.reduce((a,c)=>a+parseFloat(c.completed||0), 0);
+    const totRem  = children.reduce((a,c)=>a+parseFloat(c.remaining||0), 0);
+    document.getElementById('child-effort').textContent =
+      `Total: ${fmtNum(totEst)}h est · ${fmtNum(totComp)}h done · ${fmtNum(totRem)}h rem`;
+
+    renderChildTable();
+  }
+
+  document.getElementById('page').classList.add('show');
+}
+
+function renderChildTable() {
+  const tbody = document.getElementById('child-tbody');
+  document.getElementById('child-tbl-info').textContent =
+    `${visChildren.length} of ${allChildren.length} items`;
+
+  if (!visChildren.length) {
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--muted)">No items match filter</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = visChildren.map(c => {
+    const est  = parseFloat(c.estimate  || 0);
+    const comp = parseFloat(c.completed || 0);
+    const rem  = parseFloat(c.remaining || 0);
+    const p    = pct(comp, est);
+    const title = esc(c.title || '—');
+    return `<tr class="clickable" onclick="openDetail(${c.id})">
+      <td>
+        <a class="id-chip" href="/detail?id=${c.id}" onclick="event.stopPropagation()">#${c.id}</a>
+      </td>
+      <td>${badge(c.type,    TP_CLS, null)}</td>
+      <td>${badge(c.state,   ST_MAP, null)}</td>
+      <td>${badge(c.severity,SEV_CLS,SEV_LBL)}</td>
+      <td><span class="title-cell" title="${title}">${title}</span></td>
+      <td style="color:var(--muted);white-space:nowrap">${esc(c.assignedTo||'—')}</td>
+      <td class="num">${fmtNum(est)}</td>
+      <td class="num">${fmtNum(comp)}</td>
+      <td class="num">${fmtNum(rem)}</td>
+      <td style="min-width:100px">
+        <div class="mini-bar-wrap">
+          <div class="mini-bar"><div class="mini-bar-fill" style="width:${p}%"></div></div>
+          <span class="mini-pct">${p}%</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function openDetail(id) { location.href = `/detail?id=${id}`; }
+
+function filterChildren(val) {
+  const q = val.toLowerCase();
+  visChildren = q
+    ? allChildren.filter(c =>
+        String(c.id).includes(q) ||
+        (c.title||'').toLowerCase().includes(q) ||
+        (c.assignedTo||'').toLowerCase().includes(q) ||
+        (c.state||'').toLowerCase().includes(q) ||
+        (c.type||'').toLowerCase().includes(q))
+    : [...allChildren];
+  renderChildTable();
+}
+
+function sortChildren(col) {
+  if (sortCol === col) { sortAsc = !sortAsc; } else { sortCol = col; sortAsc = true; }
+  document.querySelectorAll('th').forEach(th => th.classList.remove('sorted'));
+  const ths = document.querySelectorAll('th');
+  const cols = ['id','type','state','severity',null,'assignedTo','estimate','completed','remaining',null];
+  const idx  = cols.indexOf(col);
+  if (idx >= 0) ths[idx]?.classList.add('sorted');
+
+  const numCols = new Set(['id','estimate','completed','remaining']);
+  visChildren.sort((a,b) => {
+    if (numCols.has(col)) {
+      const av = parseFloat(a[col]||0), bv = parseFloat(b[col]||0);
+      return sortAsc ? av - bv : bv - av;
+    }
+    const av = String(a[col]||'').toLowerCase();
+    const bv = String(b[col]||'').toLowerCase();
+    return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
+  renderChildTable();
+}
+
+function showError(msg) {
+  document.getElementById('error-msg').textContent = msg;
+  document.getElementById('error-wrap').classList.add('show');
+}
+
+init();
+</script>
+</body>
+</html>

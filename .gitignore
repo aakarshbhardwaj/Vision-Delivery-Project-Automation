@@ -1,0 +1,14 @@
+# Secret config — contains PAT token, never commit this
+.config.json
+
+# Claude Code local settings
+.claude/
+
+# Generated reports (large files, regenerated on demand)
+reports/
+
+# Mac system files
+.DS_Store
+
+# Node
+node_modules/

@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VG · DevOps Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --bg: #0d0f18; --surface: #141824; --surface2: #1a1f30; --surface3: #202538;
+  --border: #262d42; --accent: #4f8ef7; --accent2: #7c5cbf;
+  --text: #dde2f0; --muted: #7a8399;
+  --danger: #e05252; --warn: #e09a40; --success: #4caf7d;
+  --font: 'Segoe UI', system-ui, sans-serif;
+  --sidebar: 272px; --header: 54px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font);
+  font-size: 13px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.hdr { height: var(--header); background: var(--surface); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 20px; gap: 14px; flex-shrink: 0; z-index: 50; }
+.hdr-logo { font-size: 16px; font-weight: 800; letter-spacing: .06em; color: var(--accent); }
+.hdr-div  { width: 1px; height: 20px; background: var(--border); }
+.hdr-title { font-size: 14px; font-weight: 600; }
+.hdr-sprint { background: rgba(79,142,247,.13); color: var(--accent);
+  border: 1px solid rgba(79,142,247,.28); border-radius: 20px;
+  padding: 3px 11px; font-size: 11px; font-weight: 700; }
+.hdr-project { color: var(--muted); font-size: 11px; }
+.hdr-r { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+.hdr-time { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+.layout { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+.sidebar { width: var(--sidebar); min-width: var(--sidebar); background: var(--surface);
+  border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+.sb-head { padding: 12px 14px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.sb-lbl { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+.sb-count { background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 1px 7px; font-size: 10px; font-weight: 400; color: var(--muted); }
+.sb-search { width: 100%; background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); border-radius: 6px; padding: 7px 10px; font-size: 12px;
+  font-family: var(--font); outline: none; }
+.sb-search:focus { border-color: var(--accent); }
+.sb-search::placeholder { color: var(--muted); }
+.qlist { overflow-y: auto; flex: 1; padding: 6px 0; }
+
+/* Folder */
+.folder { }
+.folder-hdr { display: flex; align-items: center; gap: 6px; padding: 7px 14px;
+  cursor: pointer; color: var(--muted); font-size: 10px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; user-select: none;
+  transition: color .15s; }
+.folder-hdr:hover { color: var(--text); }
+.f-arrow { font-size: 8px; transition: transform .18s; flex-shrink: 0; }
+.folder.open .f-arrow { transform: rotate(90deg); }
+.f-cnt { margin-left: auto; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 1px 6px; font-size: 10px; font-weight: 400; }
+.folder-body { display: none; }
+.folder.open .folder-body { display: block; }
+
+/* Query item */
+.qi { display: flex; align-items: center; gap: 7px; padding: 6px 14px 6px 24px;
+  cursor: pointer; border-radius: 5px; margin: 1px 6px; color: var(--text);
+  line-height: 1.35; transition: background .1s; position: relative; }
+.qi:hover { background: var(--surface2); }
+.qi.active { background: rgba(79,142,247,.12); color: var(--accent); }
+.qi.active::before { content: ''; position: absolute; left: 6px; top: 50%;
+  transform: translateY(-50%); width: 3px; height: 60%; background: var(--accent); border-radius: 2px; }
+.qi-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--border);
+  flex-shrink: 0; transition: background .1s; }
+.qi.active .qi-dot { background: var(--accent); }
+.qi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+/* Root query (no folder indent) */
+.qi.root { padding-left: 14px; }
+.qi.root::before { left: 4px; }
+
+/* ── Main area ───────────────────────────────────────────────────────────── */
+.main { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+
+/* ── Welcome ─────────────────────────────────────────────────────────────── */
+#welcome { flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; color: var(--muted); padding: 40px; }
+.wlc-icon { font-size: 52px; opacity: .25; margin-bottom: 8px; }
+.wlc-title { font-size: 20px; font-weight: 600; color: var(--text); }
+.wlc-sub { font-size: 13px; max-width: 340px; text-align: center; line-height: 1.6; }
+
+/* ── Loading ─────────────────────────────────────────────────────────────── */
+.loading-wrap { display: none; position: fixed; inset: 0; background: rgba(13,15,24,.75);
+  z-index: 200; align-items: center; justify-content: center; flex-direction: column; gap: 14px; }
+.loading-wrap.show { display: flex; }
+.spinner { width: 38px; height: 38px; border: 3px solid var(--border);
+  border-top-color: var(--accent); border-radius: 50%; animation: spin .75s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-msg { font-size: 13px; color: var(--muted); }
+
+/* ── Content ─────────────────────────────────────────────────────────────── */
+#content { display: none; flex-direction: column; gap: 18px; padding: 20px 24px; flex: 1; }
+#content.show { display: flex; }
+
+/* Query banner */
+.q-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.q-name { font-size: 17px; font-weight: 600; }
+.q-pill { background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 3px 10px; font-size: 11px; color: var(--muted); }
+.q-folder-pill { background: rgba(124,92,191,.1); border: 1px solid rgba(124,92,191,.25);
+  border-radius: 12px; padding: 3px 10px; font-size: 10px; color: #b090f0; font-weight: 600;
+  letter-spacing: .04em; }
+.q-refresh { margin-left: auto; background: none; border: 1px solid var(--border);
+  color: var(--muted); border-radius: 6px; padding: 6px 14px; cursor: pointer;
+  font-size: 12px; font-family: var(--font); transition: all .15s; }
+.q-refresh:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Stats strip */
+.stats { display: flex; gap: 10px; flex-wrap: wrap; }
+.sc { flex: 1; min-width: 110px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px; cursor: pointer; transition: border-color .15s, background .15s; }
+.sc:hover { border-color: var(--accent); }
+.sc.filter-active { border-color: var(--accent) !important; background: rgba(79,142,247,.1); }
+.sc.filter-active .sc-lbl::after { content: ' ✓'; color: var(--accent); }
+.sc.danger { border-color: rgba(224,82,82,.45); }
+.sc.warn   { border-color: rgba(224,154,64,.45); }
+.sc.info   { border-color: rgba(79,142,247,.35); }
+.sc-num { font-size: 30px; font-weight: 700; color: var(--accent); line-height: 1; }
+.sc.danger .sc-num { color: var(--danger); }
+.sc.warn   .sc-num { color: var(--warn); }
+.sc-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .06em; margin-top: 5px; }
+
+/* Charts */
+.charts { display: grid; grid-template-columns: 220px 1fr 1fr; gap: 14px; }
+.cc { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.cc-title { font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 12px; }
+.cc-wrap { position: relative; height: 190px; }
+
+/* Risk panel */
+.risk { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.risk-hdr { padding: 11px 16px; border-bottom: 1px solid var(--border); font-size: 10px;
+  font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--muted);
+  display: flex; align-items: center; gap: 8px; }
+.risk-body { display: flex; gap: 10px; padding: 12px 16px; flex-wrap: wrap; align-items: center; min-height: 56px; }
+.rb { display: flex; align-items: center; gap: 10px; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px;
+  cursor: pointer; transition: all .15s; user-select: none; }
+.rb:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,.3); }
+.rb.filter-active { box-shadow: 0 0 0 2px var(--accent); }
+.rb.danger { border-color: rgba(224,82,82,.4); background: rgba(224,82,82,.07); }
+.rb.warn   { border-color: rgba(224,154,64,.4); background: rgba(224,154,64,.07); }
+.rb.ok     { border-color: rgba(76,175,125,.3);  background: rgba(76,175,125,.07); }
+
+/* Active filter chip */
+.filter-chip-bar { display: none; align-items: center; gap: 8px; padding: 6px 0 2px; flex-wrap: wrap; }
+.filter-chip-bar.show { display: flex; }
+.filter-chip { display: inline-flex; align-items: center; gap: 6px; background: rgba(79,142,247,.15);
+  border: 1px solid rgba(79,142,247,.4); border-radius: 20px; padding: 4px 12px;
+  font-size: 11px; color: var(--accent); font-weight: 600; }
+.filter-chip-x { cursor: pointer; opacity: .7; font-size: 13px; line-height: 1; }
+.filter-chip-x:hover { opacity: 1; }
+.filter-count { background: rgba(79,142,247,.25); border-radius: 10px; padding: 1px 7px; font-size: 10px; }
+.rb-num { font-size: 20px; font-weight: 700; }
+.rb.danger .rb-num { color: var(--danger); }
+.rb.warn   .rb-num { color: var(--warn); }
+.rb.ok     .rb-num { color: var(--success); }
+.rb-lbl { font-size: 12px; color: var(--text); }
+
+/* Table section */
+.tbl-section { background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; overflow: hidden; }
+.tbl-toolbar { padding: 10px 14px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 12px; }
+.tbl-search { background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); border-radius: 6px; padding: 7px 12px; font-size: 12px;
+  font-family: var(--font); outline: none; width: 240px; }
+.tbl-search:focus { border-color: var(--accent); }
+.tbl-search::placeholder { color: var(--muted); }
+.tbl-info { margin-left: auto; font-size: 11px; color: var(--muted); }
+.tbl-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { background: var(--surface2); color: var(--muted); font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .07em; padding: 10px 12px; text-align: left;
+  border-bottom: 1px solid var(--border); white-space: nowrap; cursor: pointer; user-select: none; }
+th:hover { color: var(--text); }
+th .sort-icon { opacity: .35; margin-left: 4px; }
+th.sorted .sort-icon { opacity: 1; color: var(--accent); }
+td { padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,.03); vertical-align: middle; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: rgba(79,142,247,.07); }
+tr:last-child td { border-bottom: none; }
+.title-cell { max-width: 320px; display: block; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; }
+.id-link { color: var(--accent); text-decoration: none; font-weight: 700;
+  font-family: monospace; font-size: 11px; }
+.id-link:hover { text-decoration: underline; }
+
+/* Badges */
+.badge { display: inline-flex; align-items: center; font-size: 10px; font-weight: 700;
+  padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+.sev-1 { background: rgba(224,82,82,.16); color: #f08080; border: 1px solid rgba(224,82,82,.35); }
+.sev-2 { background: rgba(224,154,64,.16); color: #f0b060; border: 1px solid rgba(224,154,64,.35); }
+.sev-3 { background: rgba(79,142,247,.13); color: #80b0f0; border: 1px solid rgba(79,142,247,.28); }
+.sev-4 { background: rgba(130,140,168,.1); color: var(--muted); border: 1px solid var(--border); }
+.st-active  { background: rgba(76,175,125,.13); color: #7dd6a4; border: 1px solid rgba(76,175,125,.28); }
+.st-new     { background: rgba(79,142,247,.11); color: #80b0f0; border: 1px solid rgba(79,142,247,.25); }
+.st-pending { background: rgba(224,154,64,.13); color: #f0b060; border: 1px solid rgba(224,154,64,.28); }
+.st-closed  { background: rgba(130,140,168,.08); color: var(--muted); border: 1px solid var(--border); }
+.tp-bug   { background: rgba(224,82,82,.11); color: #f08080; border: 1px solid rgba(224,82,82,.25); }
+.tp-story { background: rgba(124,92,191,.13); color: #b090f0; border: 1px solid rgba(124,92,191,.28); }
+.tp-task  { background: rgba(76,175,125,.1); color: #7dd6a4; border: 1px solid rgba(76,175,125,.22); }
+.tp-feat  { background: rgba(79,142,247,.11); color: #80b0f0; border: 1px solid rgba(79,142,247,.25); }
+.tp-other { background: rgba(130,140,168,.08); color: var(--muted); border: 1px solid var(--border); }
+
+/* Empty/Error */
+.empty-row td { text-align: center; padding: 40px; color: var(--muted); }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="hdr">
+  <span class="hdr-logo">VG</span>
+  <span class="hdr-div"></span>
+  <span class="hdr-title">Azure DevOps Dashboard</span>
+  <span class="hdr-sprint" id="hdr-sprint">—</span>
+  <span class="hdr-project" id="hdr-project"></span>
+  <div class="hdr-r">
+    <span class="hdr-time" id="hdr-time"></span>
+  </div>
+</div>
+
+<!-- Loading overlay -->
+<div class="loading-wrap" id="loading">
+  <div class="spinner"></div>
+  <div class="loading-msg" id="loading-msg">Loading...</div>
+</div>
+
+<!-- Body layout -->
+<div class="layout">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sb-head">
+      <div class="sb-lbl">
+        IR Delivery Reports
+        <span class="sb-count" id="sb-count">—</span>
+      </div>
+      <input class="sb-search" id="sb-search" type="text"
+        placeholder="Search queries..." oninput="filterSidebar(this.value)">
+    </div>
+    <div class="qlist" id="qlist">
+      <div style="padding:20px 14px;color:var(--muted);font-size:12px">Loading queries…</div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- Welcome -->
+    <div id="welcome">
+      <div class="wlc-icon">📊</div>
+      <div class="wlc-title">VG DevOps Dashboard</div>
+      <div class="wlc-sub">Select a query from the left panel to load live data from Azure DevOps</div>
+    </div>
+
+    <!-- Content (shown after a query loads) -->
+    <div id="content">
+
+      <!-- Query banner -->
+      <div class="q-banner">
+        <div class="q-name" id="q-name">—</div>
+        <span class="q-folder-pill" id="q-folder" style="display:none"></span>
+        <span class="q-pill" id="q-count"></span>
+        <button class="q-refresh" onclick="refreshQuery()">↺ Refresh</button>
+      </div>
+
+      <!-- Active filter chip -->
+      <div class="filter-chip-bar" id="filter-chip-bar">
+        <span style="font-size:11px;color:var(--muted)">Filtering by:</span>
+        <span class="filter-chip" id="filter-chip-label">
+          —
+          <span class="filter-chip-x" onclick="clearFilter()" title="Clear filter">✕</span>
+        </span>
+        <span class="filter-count" id="filter-chip-count"></span>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats">
+        <div class="sc info" id="sc-total" onclick="setFilter(null)" title="Show all items">
+          <div class="sc-num" id="s-total">—</div>
+          <div class="sc-lbl">Total Items</div>
+        </div>
+        <div class="sc danger" id="sc-critical" onclick="setFilter('severity','1 - Critical','Critical')" title="Filter Critical severity">
+          <div class="sc-num" id="s-critical">—</div>
+          <div class="sc-lbl">Critical</div>
+        </div>
+        <div class="sc warn" id="sc-high" onclick="setFilter('severity','2 - High','High Priority')" title="Filter High severity">
+          <div class="sc-num" id="s-high">—</div>
+          <div class="sc-lbl">High Priority</div>
+        </div>
+        <div class="sc warn" id="sc-pending" onclick="setFilter('state','Estimate Pending','Estimate Pending')" title="Filter Estimate Pending">
+          <div class="sc-num" id="s-pending">—</div>
+          <div class="sc-lbl">Estimate Pending</div>
+        </div>
+        <div class="sc" id="sc-unassigned" onclick="setFilter('unassigned',true,'Unassigned')" title="Filter Unassigned items">
+          <div class="sc-num" id="s-unassigned">—</div>
+          <div class="sc-lbl">Unassigned</div>
+        </div>
+        <div class="sc" id="sc-bugs" onclick="setFilter('type','Bug','Bugs')" title="Filter Bugs only">
+          <div class="sc-num" id="s-bugs">—</div>
+          <div class="sc-lbl">Bugs</div>
+        </div>
+      </div>
+
+      <!-- Charts -->
+      <div class="charts">
+        <div class="cc">
+          <div class="cc-title">Severity</div>
+          <div class="cc-wrap"><canvas id="ch-sev"></canvas></div>
+        </div>
+        <div class="cc">
+          <div class="cc-title">State Breakdown</div>
+          <div class="cc-wrap"><canvas id="ch-state"></canvas></div>
+        </div>
+        <div class="cc">
+          <div class="cc-title">Top Assignees</div>
+          <div class="cc-wrap"><canvas id="ch-assignee"></canvas></div>
+        </div>
+      </div>
+
+      <!-- Risk panel -->
+      <div class="risk">
+        <div class="risk-hdr">⚠ Delivery Risk Indicators</div>
+        <div class="risk-body" id="risk-body"></div>
+      </div>
+
+      <!-- Table -->
+      <div class="tbl-section">
+        <div class="tbl-toolbar">
+          <input class="tbl-search" type="text"
+            placeholder="Filter by title, assignee, state, ID…"
+            oninput="filterTable(this.value)">
+          <div class="tbl-info" id="tbl-info"></div>
+        </div>
+        <div class="tbl-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th onclick="sortBy('id')">ID <span class="sort-icon">↕</span></th>
+                <th onclick="sortBy('type')">Type <span class="sort-icon">↕</span></th>
+                <th onclick="sortBy('severity')">Severity <span class="sort-icon">↕</span></th>
+                <th onclick="sortBy('state')">State <span class="sort-icon">↕</span></th>
+                <th>Title</th>
+                <th onclick="sortBy('assignedTo')">Assigned To <span class="sort-icon">↕</span></th>
+                <th>Sprint</th>
+              </tr>
+            </thead>
+            <tbody id="tbl-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /layout -->
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let allQueries    = [];
+let allItems      = [];
+let filteredItems = [];  // allItems filtered by active click-filter
+let visibleItems  = [];  // filteredItems filtered by search text
+let activeQId     = null;
+let activeQName   = '';
+let activeQFolder = '';
+let sortCol       = 'id';
+let sortAsc       = true;
+let charts        = {};
+let activeFilter  = null; // { field, value, label }
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+async function init() {
+  tickClock();
+  setInterval(tickClock, 1000);
+  await loadConfig();
+  await loadQueries();
+}
+
+function tickClock() {
+  const now = new Date().toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata', hour12: false,
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  document.getElementById('hdr-time').textContent = now + ' IST';
+}
+
+async function loadConfig() {
+  try {
+    const cfg = await fetch('/api/config').then(r => r.json());
+    document.getElementById('hdr-sprint').textContent   = cfg.sprint || 'Sprint';
+    document.getElementById('hdr-project').textContent  = cfg.project || '';
+  } catch (_) {}
+}
+
+async function loadQueries() {
+  try {
+    allQueries = await fetch('/api/queries').then(r => r.json());
+    document.getElementById('sb-count').textContent = allQueries.length;
+    renderSidebar(allQueries);
+  } catch (e) {
+    document.getElementById('qlist').innerHTML =
+      `<div style="padding:16px;color:var(--danger);font-size:12px">Failed to load: ${e.message}</div>`;
+  }
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+function renderSidebar(queries) {
+  const roots   = queries.filter(q => !q.folder);
+  const folders = {};
+  queries.filter(q => q.folder).forEach(q => {
+    if (!folders[q.folder]) folders[q.folder] = [];
+    folders[q.folder].push(q);
+  });
+
+  let html = '';
+
+  if (roots.length) {
+    roots.forEach(q => { html += qiHtml(q, true); });
+  }
+
+  Object.entries(folders).sort(([a],[b]) => a.localeCompare(b)).forEach(([folder, qs]) => {
+    html += `
+    <div class="folder open" id="f-${CSS.escape(folder)}">
+      <div class="folder-hdr" onclick="this.parentElement.classList.toggle('open')">
+        <span class="f-arrow">▶</span>
+        <span style="flex:1">${folder}</span>
+        <span class="f-cnt">${qs.length}</span>
+      </div>
+      <div class="folder-body">
+        ${qs.map(q => qiHtml(q, false)).join('')}
+      </div>
+    </div>`;
+  });
+
+  document.getElementById('qlist').innerHTML = html;
+}
+
+function qiHtml(q, root) {
+  const cls  = root ? 'qi root' : 'qi';
+  const name = q.name.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  return `<div class="${cls}" data-id="${q.id}" data-name="${q.name.replace(/"/g,'&quot;')}"
+    data-folder="${(q.folder||'').replace(/"/g,'&quot;')}"
+    onclick="selectQuery(this)"
+    title="${name}">
+    <span class="qi-dot"></span>
+    <span class="qi-name">${name}</span>
+  </div>`;
+}
+
+function filterSidebar(val) {
+  const q = val.toLowerCase();
+  document.querySelectorAll('.qi').forEach(el => {
+    const match = el.dataset.name.toLowerCase().includes(q);
+    el.style.display = match ? '' : 'none';
+  });
+  document.querySelectorAll('.folder').forEach(f => {
+    if (q) f.classList.add('open');
+    const anyVisible = [...f.querySelectorAll('.qi')].some(el => el.style.display !== 'none');
+    f.style.display = anyVisible ? '' : 'none';
+  });
+}
+
+// ── Query execution ───────────────────────────────────────────────────────────
+function selectQuery(el) {
+  const id     = el.dataset.id;
+  const name   = el.dataset.name;
+  const folder = el.dataset.folder;
+  if (id === activeQId) return;
+
+  document.querySelectorAll('.qi').forEach(e => e.classList.remove('active'));
+  el.classList.add('active');
+
+  activeQId     = id;
+  activeQName   = name;
+  activeQFolder = folder;
+  runQuery();
+}
+
+async function runQuery() {
+  if (!activeQId) return;
+  showLoading(`Running "${activeQName}"…`);
+  try {
+    const res = await fetch(`/api/run?id=${activeQId}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || res.statusText);
+    }
+    allItems = await res.json();
+    activeFilter  = null;
+    filteredItems = [...allItems];
+    visibleItems  = [...allItems];
+    hideLoading();
+    renderAll();
+  } catch (e) {
+    hideLoading();
+    showError(e.message);
+  }
+}
+
+function refreshQuery() { runQuery(); }
+
+// ── Render all ────────────────────────────────────────────────────────────────
+function renderAll() {
+  document.getElementById('welcome').style.display   = 'none';
+  document.getElementById('content').style.display   = 'flex';
+
+  // Banner
+  document.getElementById('q-name').textContent  = activeQName;
+  document.getElementById('q-count').textContent = `${allItems.length} items`;
+  const folderEl = document.getElementById('q-folder');
+  if (activeQFolder) {
+    folderEl.textContent    = activeQFolder;
+    folderEl.style.display  = '';
+  } else {
+    folderEl.style.display  = 'none';
+  }
+
+  renderStats(allItems);
+  renderCharts(allItems);
+  renderRisk(allItems);
+  renderTable(visibleItems);
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function renderStats(items) {
+  const set = (id, val) => { document.getElementById(id).textContent = val; };
+  set('s-total',     items.length);
+  set('s-critical',  items.filter(i => i.severity === '1 - Critical').length);
+  set('s-high',      items.filter(i => i.severity === '2 - High').length);
+  set('s-pending',   items.filter(i => i.state === 'Estimate Pending').length);
+  set('s-unassigned',items.filter(i => !i.assignedTo).length);
+  set('s-bugs',      items.filter(i => i.type === 'Bug').length);
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+const GRID   = '#262d42';
+const TICK   = '#7a8399';
+const FONT   = { size: 10, family: 'Segoe UI, system-ui, sans-serif' };
+
+const SEV_MAP = {
+  '1 - Critical': { label: 'Critical', color: '#ff3b3b' },
+  '2 - High':     { label: 'High',     color: '#ff8c00' },
+  '3 - Medium':   { label: 'Medium',   color: '#00b4f0' },
+  '4 - Low':      { label: 'Low',      color: '#00d67a' },
+};
+const STATE_COLORS = {
+  'Active':           '#00e676',
+  'New':              '#2979ff',
+  'Estimate Pending': '#ff9100',
+  'Closed':           '#546e7a',
+  'Resolved':         '#00bcd4',
+  'In Progress':      '#d500f9',
+  'Removed':          '#37474f',
+};
+const ASSIGNEE_PALETTE = [
+  '#ff6b6b','#ffd93d','#6bcb77','#4d96ff',
+  '#ff922b','#cc5de8','#20c997','#f06595',
+];
+
+function countBy(items, key) {
+  const c = {};
+  items.forEach(i => { const v = i[key] || 'Unassigned'; c[v] = (c[v]||0)+1; });
+  return c;
+}
+
+function killChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+function renderCharts(items) {
+  // — Severity doughnut —
+  killChart('ch-sev');
+  const sevEntries = Object.entries(SEV_MAP)
+    .map(([key, m]) => ({ label: m.label, color: m.color, count: items.filter(i => i.severity === key).length }))
+    .filter(e => e.count > 0);
+  charts['ch-sev'] = new Chart(document.getElementById('ch-sev'), {
+    type: 'doughnut',
+    data: {
+      labels: sevEntries.map(e => e.label),
+      datasets: [{ data: sevEntries.map(e => e.count),
+        backgroundColor: sevEntries.map(e => e.color),
+        borderColor: '#0d0f18', borderWidth: 3, hoverOffset: 8 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '58%',
+      plugins: {
+        legend: { position: 'right',
+          labels: { color: '#dde2f0', font: { size: 11, family: 'Segoe UI, system-ui, sans-serif' },
+            padding: 12, boxWidth: 12, usePointStyle: true } }
+      }
+    }
+  });
+
+  // — State bar —
+  killChart('ch-state');
+  const stateCounts = countBy(items, 'state');
+  const stateEntries = Object.entries(stateCounts).sort((a,b)=>b[1]-a[1]).slice(0, 7);
+  charts['ch-state'] = new Chart(document.getElementById('ch-state'), {
+    type: 'bar',
+    data: {
+      labels: stateEntries.map(([k]) => k),
+      datasets: [{ data: stateEntries.map(([,v]) => v),
+        backgroundColor: stateEntries.map(([k]) => STATE_COLORS[k] || '#4f8ef7'),
+        borderRadius: 4, borderSkipped: false }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: TICK, font: FONT, maxRotation: 30 }, grid: { display: false },
+          border: { color: GRID } },
+        y: { ticks: { color: TICK, font: FONT }, grid: { color: GRID },
+          border: { color: GRID } }
+      }
+    }
+  });
+
+  // — Assignee bar —
+  killChart('ch-assignee');
+  const assignCounts = countBy(items, 'assignedTo');
+  delete assignCounts['Unassigned']; delete assignCounts[''];
+  const topA = Object.entries(assignCounts).sort((a,b)=>b[1]-a[1]).slice(0, 8);
+  charts['ch-assignee'] = new Chart(document.getElementById('ch-assignee'), {
+    type: 'bar',
+    data: {
+      labels: topA.map(([k]) => k.split(' ')[0]),
+      datasets: [{ data: topA.map(([,v]) => v),
+        backgroundColor: topA.map((_, i) => ASSIGNEE_PALETTE[i % ASSIGNEE_PALETTE.length]),
+        borderRadius: 5, borderSkipped: false }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { title: (ctx) => topA[ctx[0].dataIndex]?.[0] || '' } } },
+      scales: {
+        x: { ticks: { color: TICK, font: FONT }, grid: { display: false }, border: { color: GRID } },
+        y: { ticks: { color: TICK, font: FONT, stepSize: 1 }, grid: { color: GRID }, border: { color: GRID } }
+      }
+    }
+  });
+}
+
+// ── Risk panel ────────────────────────────────────────────────────────────────
+function renderRisk(items) {
+  const risks = [
+    { n: items.filter(i=>i.severity==='1 - Critical').length, lbl:'Critical items',    cls:'danger', field:'severity',   value:'1 - Critical',      label:'Critical'          },
+    { n: items.filter(i=>i.severity==='2 - High').length,     lbl:'High priority',     cls:'warn',   field:'severity',   value:'2 - High',           label:'High Priority'     },
+    { n: items.filter(i=>i.state==='Estimate Pending').length, lbl:'Estimate Pending', cls:'warn',   field:'state',      value:'Estimate Pending',   label:'Estimate Pending'  },
+    { n: items.filter(i=>!i.assignedTo).length,               lbl:'Unassigned',        cls:'warn',   field:'unassigned', value:'true',               label:'Unassigned'        },
+  ].filter(r => r.n > 0);
+
+  document.getElementById('risk-body').innerHTML = risks.length
+    ? risks.map(r => `
+        <div class="rb ${r.cls}" title="Click to filter"
+             data-field="${r.field}" data-value="${r.value}"
+             onclick="setFilter('${r.field}','${r.field==='unassigned'?true:r.value}','${r.label}')">
+          <span class="rb-num">${r.n}</span>
+          <span class="rb-lbl">${r.lbl}</span>
+          <span style="font-size:10px;opacity:.5;margin-left:4px">▼</span>
+        </div>`).join('')
+    : `<div class="rb ok"><span class="rb-num">✓</span>
+        <span class="rb-lbl">No delivery risks detected</span></div>`;
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────────
+const SEV_CLS  = { '1 - Critical':'sev-1','2 - High':'sev-2','3 - Medium':'sev-3','4 - Low':'sev-4' };
+const SEV_LBL  = { '1 - Critical':'Critical','2 - High':'High','3 - Medium':'Medium','4 - Low':'Low' };
+const ST_CLS   = { 'Active':'st-active','New':'st-new','Estimate Pending':'st-pending',
+  'Closed':'st-closed','Resolved':'st-closed','Removed':'st-closed' };
+const TP_CLS   = { 'Bug':'tp-bug','User Story':'tp-story','Task':'tp-task','Feature':'tp-feat' };
+
+function badge(text, clsMap, lblMap) {
+  const cls = clsMap[text] || 'tp-other';
+  const lbl = lblMap ? (lblMap[text] || text || '—') : (text || '—');
+  return `<span class="badge ${cls}">${lbl}</span>`;
+}
+
+function renderTable(items) {
+  const tbody = document.getElementById('tbl-body');
+  document.getElementById('tbl-info').textContent =
+    `${items.length} of ${allItems.length} items`;
+
+  if (!items.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="7">No items match your filter</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = items.map(item => {
+    const sprint = (item.iterationPath || '').split('\\').pop() || '—';
+    const title  = (item.title || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return `<tr class="clickable" onclick="location.href='/detail?id=${item.id}'">
+      <td>
+        <a class="id-link" href="/detail?id=${item.id}"
+           onclick="event.stopPropagation()">${item.id}</a>
+        <a style="margin-left:5px;color:var(--muted);font-size:10px;text-decoration:none"
+           href="${item.url}" target="_blank" rel="noopener"
+           onclick="event.stopPropagation()" title="Open in Azure DevOps">↗</a>
+      </td>
+      <td>${badge(item.type, TP_CLS, null)}</td>
+      <td>${badge(item.severity, SEV_CLS, SEV_LBL)}</td>
+      <td>${badge(item.state, ST_CLS, null)}</td>
+      <td><span class="title-cell" title="${title}">${title || '—'}</span></td>
+      <td>${item.assignedTo || '<span style="color:var(--muted)">—</span>'}</td>
+      <td style="color:var(--muted);font-size:11px">${sprint}</td>
+    </tr>`;
+  }).join('');
+}
+
+function filterTable(val) {
+  const q = val.toLowerCase();
+  visibleItems = q
+    ? filteredItems.filter(i =>
+        String(i.id).includes(q) ||
+        (i.title||'').toLowerCase().includes(q) ||
+        (i.assignedTo||'').toLowerCase().includes(q) ||
+        (i.state||'').toLowerCase().includes(q) ||
+        (i.type||'').toLowerCase().includes(q) ||
+        (i.severity||'').toLowerCase().includes(q))
+    : [...filteredItems];
+  renderTable(visibleItems);
+}
+
+// ── Click filters ─────────────────────────────────────────────────────────────
+function setFilter(field, value, label) {
+  // Toggle off if same filter clicked again
+  if (activeFilter && activeFilter.field === field && activeFilter.value === value) {
+    clearFilter(); return;
+  }
+  // Set new filter
+  activeFilter = field ? { field, value, label } : null;
+  applyActiveFilter();
+}
+
+function clearFilter() {
+  activeFilter  = null;
+  applyActiveFilter();
+}
+
+function applyActiveFilter() {
+  // Recompute filteredItems from allItems
+  if (!activeFilter) {
+    filteredItems = [...allItems];
+  } else {
+    filteredItems = allItems.filter(item => {
+      if (activeFilter.field === 'severity')   return item.severity === activeFilter.value;
+      if (activeFilter.field === 'state')      return item.state    === activeFilter.value;
+      if (activeFilter.field === 'type')       return item.type     === activeFilter.value;
+      if (activeFilter.field === 'unassigned') return !item.assignedTo;
+      return true;
+    });
+  }
+
+  // Preserve any existing text search
+  const q = (document.querySelector('.tbl-search')?.value || '').toLowerCase();
+  visibleItems = q
+    ? filteredItems.filter(i =>
+        String(i.id).includes(q) ||
+        (i.title||'').toLowerCase().includes(q) ||
+        (i.assignedTo||'').toLowerCase().includes(q) ||
+        (i.state||'').toLowerCase().includes(q) ||
+        (i.type||'').toLowerCase().includes(q) ||
+        (i.severity||'').toLowerCase().includes(q))
+    : [...filteredItems];
+
+  renderTable(visibleItems);
+  updateFilterUI();
+}
+
+function updateFilterUI() {
+  // Stat card highlights
+  const ids  = ['sc-critical','sc-high','sc-pending','sc-unassigned','sc-bugs','sc-total'];
+  const vals = [
+    activeFilter?.field==='severity'   && activeFilter?.value==='1 - Critical',
+    activeFilter?.field==='severity'   && activeFilter?.value==='2 - High',
+    activeFilter?.field==='state'      && activeFilter?.value==='Estimate Pending',
+    activeFilter?.field==='unassigned',
+    activeFilter?.field==='type'       && activeFilter?.value==='Bug',
+    !activeFilter,
+  ];
+  ids.forEach((id, i) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('filter-active', !!vals[i]);
+  });
+
+  // Risk panel — re-highlight active rb
+  document.querySelectorAll('.rb[data-field]').forEach(rb => {
+    const isActive = activeFilter &&
+      rb.dataset.field === activeFilter.field &&
+      (rb.dataset.value === String(activeFilter.value));
+    rb.classList.toggle('filter-active', isActive);
+  });
+
+  // Filter chip bar
+  const bar   = document.getElementById('filter-chip-bar');
+  const label = document.getElementById('filter-chip-label');
+  const count = document.getElementById('filter-chip-count');
+  if (activeFilter) {
+    bar.classList.add('show');
+    label.childNodes[0].textContent = activeFilter.label + ' ';
+    count.textContent = `${filteredItems.length} of ${allItems.length} items`;
+  } else {
+    bar.classList.remove('show');
+  }
+}
+
+function sortBy(col) {
+  if (sortCol === col) { sortAsc = !sortAsc; }
+  else { sortCol = col; sortAsc = true; }
+
+  document.querySelectorAll('th').forEach(th => th.classList.remove('sorted'));
+  const ths = document.querySelectorAll('th');
+  const colIndex = ['id','type','severity','state',null,'assignedTo'].indexOf(col);
+  if (colIndex >= 0) ths[colIndex]?.classList.add('sorted');
+
+  visibleItems.sort((a, b) => {
+    let av = String(a[col] ?? '').toLowerCase();
+    let bv = String(b[col] ?? '').toLowerCase();
+    if (col === 'id') {
+      av = parseFloat(av) || 0; bv = parseFloat(bv) || 0;
+      return sortAsc ? av - bv : bv - av;
+    }
+    return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
+  renderTable(visibleItems);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function showLoading(msg) {
+  document.getElementById('loading-msg').textContent = msg || 'Loading…';
+  document.getElementById('loading').classList.add('show');
+}
+function hideLoading() { document.getElementById('loading').classList.remove('show'); }
+
+function showError(msg) {
+  document.getElementById('welcome').style.display = 'flex';
+  document.getElementById('content').style.display = 'none';
+  document.getElementById('welcome').innerHTML = `
+    <div class="wlc-icon" style="opacity:.5">⚠</div>
+    <div class="wlc-title" style="color:var(--danger)">Query Failed</div>
+    <div class="wlc-sub">${msg}</div>
+    <div class="wlc-sub" style="margin-top:8px;opacity:.6">
+      Some queries use @Me or @CurrentIteration — try another query.</div>`;
+}
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VG | Estimate Pending + QA Risk Report</title>
+<style>
+  :root {
+    --bg:#0f1117;--surface:#181c27;--surface2:#1e2334;
+    --border:#2a2f45;--accent:#4f8ef7;--accent2:#7c5cbf;
+    --text:#e2e6f0;--muted:#8891a8;--danger:#e05252;--warn:#e09a40;
+    --success:#4caf7d;--font:'Segoe UI',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.5;}
+  .page-header{background:var(--surface);border-bottom:1px solid var(--border);padding:18px 32px;display:flex;align-items:center;justify-content:space-between;}
+  .logo{font-size:11px;font-weight:700;letter-spacing:.15em;color:var(--accent);text-transform:uppercase;}
+  .report-title{font-size:18px;font-weight:600;}
+  .report-meta{font-size:12px;color:var(--muted);margin-top:2px;}
+  .item-count{font-size:28px;font-weight:700;color:var(--danger);}
+  .item-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;}
+  .main{padding:24px 32px;}
+  .risk-banner{border-radius:10px;padding:18px 24px;margin-bottom:20px;border:1px solid var(--danger);background:rgba(224,82,82,.1);}
+  .risk-label{font-size:18px;font-weight:700;margin-bottom:6px;}
+  .risk-detail{font-size:13px;color:var(--muted);}
+  .risk-overshoot{font-size:13px;color:var(--danger);margin-top:6px;font-weight:600;}
+  .summary-strip{display:flex;gap:12px;margin-bottom:24px;flex-wrap:wrap;}
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 20px;min-width:120px;}
+  .stat-card.danger{border-color:var(--danger);}
+  .stat-card.warn{border-color:var(--warn);}
+  .stat-card.ok{border-color:var(--success);}
+  .stat-num{font-size:28px;font-weight:700;color:var(--accent);}
+  .stat-card.danger .stat-num{color:var(--danger);}
+  .stat-card.warn .stat-num{color:var(--warn);}
+  .stat-card.ok .stat-num{color:var(--success);}
+  .stat-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:2px;}
+  .cap-wrap{margin:0 0 24px;}
+  .cap-header{display:flex;justify-content:space-between;margin-bottom:6px;font-size:12px;color:var(--muted);}
+  .cap-track{height:16px;background:var(--surface2);border-radius:8px;overflow:visible;position:relative;}
+  .cap-fill{height:100%;border-radius:8px;background:var(--danger);width:108%;}
+  .cap-overflow-marker{position:absolute;right:-8%;top:-4px;bottom:-4px;width:2px;background:rgba(255,255,255,.3);border-radius:2px;}
+  .cap-label{font-size:13px;color:var(--danger);font-weight:600;margin-top:8px;}
+  .reason-strip{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:24px;}
+  .reason-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:10px;}
+  .reason-count{font-size:20px;font-weight:700;color:var(--warn);}
+  .reason-text{font-size:12px;color:var(--muted);max-width:260px;}
+  .section-title{font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:20px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border);}
+  .title-warn{color:var(--warn);border-color:rgba(224,154,64,.3);}
+  .data-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:32px;}
+  .data-table th{background:var(--surface2);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.07em;font-weight:600;padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);}
+  .data-table td{padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:top;}
+  .data-table tr:hover td{background:var(--surface2);}
+  .title-cell{display:block;max-width:380px;line-height:1.4;}
+  .id-link{color:var(--accent);text-decoration:none;font-weight:600;font-family:monospace;}
+  .badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:12px;white-space:nowrap;}
+  .sev-critical{background:rgba(224,82,82,.18);color:#f08080;border:1px solid rgba(224,82,82,.4);}
+  .sev-high{background:rgba(224,154,64,.18);color:#f0b060;border:1px solid rgba(224,154,64,.4);}
+  .sev-medium{background:rgba(79,142,247,.15);color:#80b0f0;border:1px solid rgba(79,142,247,.3);}
+  .state-pending{background:rgba(224,154,64,.15);color:#f0b060;border:1px solid rgba(224,154,64,.3);}
+  .plat-badge{background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:1px 7px;font-size:11px;}
+  .reason-inline{font-size:11px;color:var(--muted);font-style:italic;max-width:220px;display:block;}
+  .search-bar{margin-bottom:16px;}
+  .search-bar input{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 14px;width:340px;font-size:13px;font-family:var(--font);}
+  .search-bar input:focus{outline:none;border-color:var(--accent);}
+  .search-bar input::placeholder{color:var(--muted);}
+  .tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0;}
+  .tab{padding:8px 18px;border-radius:6px 6px 0 0;cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);border:1px solid transparent;border-bottom:none;margin-bottom:-1px;}
+  .tab.active{background:var(--surface);color:var(--text);border-color:var(--border);}
+  .tab-panel{display:none;}.tab-panel.active{display:block;}
+</style>
+</head>
+<body>
+<div class="page-header">
+  <div>
+    <div class="logo">VG · Vision Group · Azure DevOps</div>
+    <div class="report-title">Sprint Risk & Estimation Status Report</div>
+    <div class="report-meta">Project: VG Platform &nbsp;·&nbsp; Generated: Sample Preview &nbsp;·&nbsp; 20 Work Days Remaining</div>
+  </div>
+  <div style="text-align:right">
+    <div class="item-count">13</div>
+    <div class="item-label">Pending Items</div>
+  </div>
+</div>
+
+<div class="main">
+  <!-- TABS -->
+  <div class="tabs">
+    <div class="tab active" onclick="showTab('risk')">🔴 QA Risk Overview</div>
+    <div class="tab" onclick="showTab('pending')">⏳ Estimate Pending</div>
+    <div class="tab" onclick="showTab('platform')">📱 By Platform</div>
+    <div class="tab" onclick="showTab('reason')">🔎 Reason Analysis</div>
+  </div>
+
+  <!-- TAB: Risk Overview -->
+  <div class="tab-panel active" id="tab-risk">
+    <div class="risk-banner">
+      <div class="risk-label">🔴 OVER CAPACITY — QA Bandwidth Risk</div>
+      <div class="risk-detail">13 user stories pending estimation + additional active items exceed QA team capacity for 20 remaining work days.</div>
+      <div class="risk-overshoot">⚠ Estimated overshoot: items not yet scoped cannot be committed to current sprint without scope negotiation.</div>
+    </div>
+    <div class="summary-strip">
+      <div class="stat-card ok"><div class="stat-num">20</div><div class="stat-label">Work Days Left</div></div>
+      <div class="stat-card warn"><div class="stat-num">~40</div><div class="stat-label">QA Capacity (units)</div></div>
+      <div class="stat-card danger"><div class="stat-num">13</div><div class="stat-label">Not Estimated</div></div>
+      <div class="stat-card danger"><div class="stat-num">2</div><div class="stat-label">Critical Severity</div></div>
+      <div class="stat-card warn"><div class="stat-num">10</div><div class="stat-label">High Severity</div></div>
+      <div class="stat-card"><div class="stat-num">1</div><div class="stat-label">Medium Severity</div></div>
+    </div>
+    <div class="cap-wrap">
+      <div class="cap-header"><span>QA Capacity Utilisation</span><span style="color:var(--danger);font-weight:700">108% — OVER LIMIT</span></div>
+      <div class="cap-track">
+        <div class="cap-fill"></div>
+        <div class="cap-overflow-marker"></div>
+      </div>
+      <div class="cap-label">▲ 8% over available QA bandwidth — items need to be deferred or re-prioritised</div>
+    </div>
+    <h3 class="section-title title-warn">⚠ Management Highlight — Items at Risk</h3>
+    <table class="data-table">
+      <thead><tr><th>Risk Factor</th><th>Count</th><th>Impact</th><th>Recommendation</th></tr></thead>
+      <tbody>
+        <tr><td>Estimate Pending (no scope)</td><td style="color:var(--danger);font-weight:700">13</td><td>Cannot plan QA</td><td>Force estimation session this week</td></tr>
+        <tr><td>Push Notification stories (flow changed)</td><td style="color:var(--warn);font-weight:700">8</td><td>Scope unclear</td><td>Lock requirements; freeze feature</td></tr>
+        <tr><td>Critical severity unestimated</td><td style="color:var(--danger);font-weight:700">2</td><td>High delivery risk</td><td>Immediate escalation</td></tr>
+        <tr><td>Parquet stories awaiting team estimates</td><td style="color:var(--warn);font-weight:700">2</td><td>Blocking QA plan</td><td>Parquet + QA team sync needed</td></tr>
+        <tr><td>Existing JSON blocker (Story #212925)</td><td style="color:var(--warn);font-weight:700">1</td><td>Dev dependency</td><td>Alpesh Patel to provide JSON ASAP</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- TAB: Estimate Pending -->
+  <div class="tab-panel" id="tab-pending">
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="🔍 Filter by title, assignee, ID..." oninput="filterTable(this.value)">
+    </div>
+    <div class="summary-strip">
+      <div class="stat-card danger"><div class="stat-num">13</div><div class="stat-label">Total Pending</div></div>
+      <div class="stat-card danger"><div class="stat-num">2</div><div class="stat-label">🔴 Critical</div></div>
+      <div class="stat-card warn"><div class="stat-num">10</div><div class="stat-label">🟠 High</div></div>
+      <div class="stat-card"><div class="stat-num">1</div><div class="stat-label">🔵 Medium</div></div>
+    </div>
+    <table class="data-table" id="mainTable">
+      <thead>
+        <tr>
+          <th>ID</th><th>Sev</th><th>Platform</th><th>Client</th><th>Title</th><th>Assigned To</th><th>Initiator</th><th>Reason for Pending</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td><a class="id-link">214620</a></td><td><span class="badge sev-critical">● Critical</span></td><td><span class="plat-badge">Cloud</span></td><td>PLM</td><td><span class="title-cell">Planogram extraction and processing via a URL</span></td><td>Pradeep Kumar</td><td>Kartikey Sharma</td><td><span class="reason-inline">TD Done — estimation pending from DEV</span></td></tr>
+        <tr><td><a class="id-link">214643</a></td><td><span class="badge sev-high">● High</span></td><td><span class="plat-badge">Parquet</span></td><td>All</td><td><span class="title-cell">Parquet - Addition of Outlet Group Definition information</span></td><td>Bharat Singh</td><td>Kartikey Sharma</td><td><span class="reason-inline">Awaiting estimates from Parquet and QA Team</span></td></tr>
+        <tr><td><a class="id-link">214701</a></td><td><span class="badge sev-high">● High</span></td><td><span class="plat-badge">Mobile</span></td><td>All</td><td><span class="title-cell">MOB | IRed - Push Notification | Draft Not Submitted Trigger</span></td><td>Sachin Ahuja</td><td>Tushant Chaudhary</td><td><span class="reason-inline">Feature re-discussed — flow change in progress</span></td></tr>
+        <tr><td><a class="id-link">214703</a></td><td><span class="badge sev-high">● High</span></td><td><span class="plat-badge">Mobile</span></td><td>Henkel, ARCA BU</td><td><span class="title-cell">MOB | IRed - Push Notification | Approaching Due Date Trigger</span></td><td>Sachin Ahuja</td><td>Tushant Chaudhary</td><td><span class="reason-inline">Feature re-discussed — flow change in progress</span></td></tr>
+        <tr><td><a class="id-link">204507</a></td><td><span class="badge sev-high">● High</span></td><td><span class="plat-badge">Portal</span></td><td>Henkel, ARCA BU</td><td><span class="title-cell">CP | Push Notification Setup — Grid View, Config & Assignment</span></td><td>Lalit Sharma</td><td>Tushant Chaudhary</td><td><span class="reason-inline">Feature re-discussed — flow change in progress</span></td></tr>
+        <tr><td><a class="id-link">204722</a></td><td><span class="badge sev-high">● High</span></td><td><span class="plat-badge">Portal</span></td><td>All</td><td><span class="title-cell">CP | Push Notification Setup — Scheduling & Triggers</span></td><td>Lalit Sharma</td><td>Tushant Chaudhary</td><td><span class="reason-inline">Feature re-discussed — flow change in progress</span></td></tr>
+        <tr><td><a class="id-link">204735</a></td><td><span class="badge sev-high">● High</span></td><td><span class="plat-badge">Cloud</span></td><td>Henkel</td><td><span class="title-cell">API | IRed - Push Notification Setup and Management</span></td><td>Lalit Sharma</td><td>Tushant Chaudhary</td><td><span class="reason-inline">Feature re-discussed — flow change in progress</span></td></tr>
+        <tr><td><a class="id-link">204814</a></td><td><span class="badge sev-high">● High</span></td><td><span class="plat-badge">Mobile</span></td><td>HENKEL, ARCA BU</td><td><span class="title-cell">MOB | IRed - Push Notification Management</span></td><td>Sachin Ahuja</td><td>Tushant Chaudhary</td><td><span class="reason-inline">Feature re-discussed — flow change in progress</span></td></tr>
+        <tr><td><a class="id-link">204828</a></td><td><span class="badge sev-high">● High</span></td><td><span class="plat-badge">Cloud</span></td><td>All</td><td><span class="title-cell">Logic | Push Notification Setup — Scheduling & Triggers</span></td><td>Lalit Sharma</td><td>Tushant Chaudhary</td><td><span class="reason-inline">Feature re-discussed — flow change in progress</span></td></tr>
+        <tr><td><a class="id-link">214025</a></td><td><span class="badge sev-high">● High</span></td><td><span class="plat-badge">Mobile</span></td><td>All</td><td><span class="title-cell">MOB | CTW/PerfectScore - Update PushNotification text</span></td><td>Sachin Ahuja</td><td>Tushant Chaudhary</td><td><span class="reason-inline">Feature re-discussed — flow change in progress</span></td></tr>
+        <tr><td><a class="id-link">212925</a></td><td><span class="badge sev-high">● High</span></td><td><span class="plat-badge">Cloud</span></td><td>All</td><td><span class="title-cell">Logic || Evaluate Conversion Eligibility and Pass Questions to POG</span></td><td>Pradeep Kumar</td><td>Swati Giri</td><td><span class="reason-inline">Estimation pending — JSON needed from Alpesh Patel</span></td></tr>
+        <tr><td><a class="id-link">214538</a></td><td><span class="badge sev-critical">● Critical</span></td><td><span class="plat-badge">General</span></td><td>All</td><td><span class="title-cell">Tech Debt - Planogram Position Raw Data from Ezpog service</span></td><td>Pradeep Kumar</td><td>Naga Bhadrathvadla</td><td><span class="reason-inline">QA team understanding requirements from DEV</span></td></tr>
+        <tr><td><a class="id-link">214634</a></td><td><span class="badge sev-medium">● Medium</span></td><td><span class="plat-badge">Parquet</span></td><td>All</td><td><span class="title-cell">Parquet - Addition of Program item information in parquet file</span></td><td>Bharat Singh</td><td>Kartikey Sharma</td><td><span class="reason-inline">Awaiting estimates from Parquet and QA Team</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- TAB: By Platform -->
+  <div class="tab-panel" id="tab-platform">
+    <div class="summary-strip">
+      <div class="stat-card warn"><div class="stat-num">5</div><div class="stat-label">📱 Mobile</div></div>
+      <div class="stat-card warn"><div class="stat-num">4</div><div class="stat-label">☁ Cloud / API</div></div>
+      <div class="stat-card warn"><div class="stat-num">2</div><div class="stat-label">🌐 Portal</div></div>
+      <div class="stat-card"><div class="stat-num">2</div><div class="stat-label">📦 Parquet</div></div>
+    </div>
+
+    <h3 class="section-title">📱 Mobile — 5 stories pending</h3>
+    <table class="data-table"><thead><tr><th>ID</th><th>Severity</th><th>Title</th><th>Assigned</th></tr></thead><tbody>
+      <tr><td><a class="id-link">214701</a></td><td><span class="badge sev-high">● High</span></td><td>Push Notification | Draft Not Submitted Trigger</td><td>Sachin Ahuja</td></tr>
+      <tr><td><a class="id-link">214703</a></td><td><span class="badge sev-high">● High</span></td><td>Push Notification | Approaching Due Date Trigger</td><td>Sachin Ahuja</td></tr>
+      <tr><td><a class="id-link">204814</a></td><td><span class="badge sev-high">● High</span></td><td>IRed - Push Notification Management</td><td>Sachin Ahuja</td></tr>
+      <tr><td><a class="id-link">214025</a></td><td><span class="badge sev-high">● High</span></td><td>CTW/PerfectScore - Update PushNotification text</td><td>Sachin Ahuja</td></tr>
+    </tbody></table>
+
+    <h3 class="section-title">☁ Cloud / API — 4 stories pending</h3>
+    <table class="data-table"><thead><tr><th>ID</th><th>Severity</th><th>Title</th><th>Assigned</th></tr></thead><tbody>
+      <tr><td><a class="id-link">214620</a></td><td><span class="badge sev-critical">● Critical</span></td><td>Planogram extraction and processing via a URL</td><td>Pradeep Kumar</td></tr>
+      <tr><td><a class="id-link">204735</a></td><td><span class="badge sev-high">● High</span></td><td>API | IRed - Push Notification Setup</td><td>Lalit Sharma</td></tr>
+      <tr><td><a class="id-link">204828</a></td><td><span class="badge sev-high">● High</span></td><td>Logic | Push Notification Scheduling & Triggers</td><td>Lalit Sharma</td></tr>
+      <tr><td><a class="id-link">212925</a></td><td><span class="badge sev-high">● High</span></td><td>Evaluate Conversion Eligibility — POG Service</td><td>Pradeep Kumar</td></tr>
+      <tr><td><a class="id-link">214538</a></td><td><span class="badge sev-critical">● Critical</span></td><td>Tech Debt - Planogram Position Raw Data</td><td>Pradeep Kumar</td></tr>
+    </tbody></table>
+  </div>
+
+  <!-- TAB: Reason Analysis -->
+  <div class="tab-panel" id="tab-reason">
+    <div class="section-title">Root Cause Breakdown — Why Stories Are Not Estimated</div>
+    <div class="reason-strip">
+      <div class="reason-card"><span class="reason-count">8</span><span class="reason-text">Feature getting re-discussed — flow change (Push Notifications)</span></div>
+      <div class="reason-card"><span class="reason-count">2</span><span class="reason-text">Awaiting estimates from Parquet and QA Team</span></div>
+      <div class="reason-card"><span class="reason-count">1</span><span class="reason-text">TD Done — estimation pending from DEV (Planogram URL)</span></div>
+      <div class="reason-card"><span class="reason-count">1</span><span class="reason-text">Estimation pending — JSON needed from Alpesh Patel</span></div>
+      <div class="reason-card"><span class="reason-count">1</span><span class="reason-text">QA team understanding requirements from DEV</span></div>
+    </div>
+    <h3 class="section-title title-warn">⚠ Action Items for Management</h3>
+    <table class="data-table"><thead><tr><th>#</th><th>Action Required</th><th>Owner</th><th>Impact</th><th>Items Unblocked</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Lock Push Notification feature requirements — freeze re-discussions</td><td>Tushant Chaudhary</td><td><span class="badge sev-critical">● Critical</span></td><td>8 stories</td></tr>
+      <tr><td>2</td><td>Alpesh Patel to provide required JSON to Pradeep Kumar</td><td>Alpesh Patel / Swati Giri</td><td><span class="badge sev-high">● High</span></td><td>1 story</td></tr>
+      <tr><td>3</td><td>Parquet + QA estimation sync call</td><td>Kartikey Sharma</td><td><span class="badge sev-high">● High</span></td><td>2 stories</td></tr>
+      <tr><td>4</td><td>DEV to finalise Planogram URL estimation (TD Done)</td><td>Pradeep Kumar</td><td><span class="badge sev-critical">● Critical</span></td><td>1 story</td></tr>
+      <tr><td>5</td><td>DEV-QA requirements walkthrough for Tech Debt item</td><td>Pradeep Kumar</td><td><span class="badge sev-high">● High</span></td><td>1 story</td></tr>
+    </tbody></table>
+  </div>
+</div>
+
+<script>
+function showTab(id) {
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  const tabs = ['risk','pending','platform','reason'];
+  document.querySelectorAll('.tab')[tabs.indexOf(id)].classList.add('active');
+  document.getElementById('tab-'+id).classList.add('active');
+}
+function filterTable(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('#mainTable tbody tr').forEach(tr => {
+    tr.style.display = !q || tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+</script>
+</body>
+</html>

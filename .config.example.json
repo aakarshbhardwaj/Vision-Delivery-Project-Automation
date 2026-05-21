@@ -1,0 +1,8 @@
+{
+  "org":            "https://dev.azure.com/YOUR-ORG",
+  "proj":           "Product-Development",
+  "pat":            "YOUR-PERSONAL-ACCESS-TOKEN",
+  "team":           "IR",
+  "sprint":         "Product-Development\\IR\\Release 56\\IR_R56_Sprint 56.1",
+  "reportFolderId": "YOUR-REPORT-FOLDER-ID"
+}
