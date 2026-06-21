@@ -289,6 +289,7 @@ const server = http.createServer(async (req, res) => {
         'child-bugs':          reportData.fetchChildBugsData,
         'database-effort':     reportData.fetchDatabaseEffortData,
         'daily-activity':      reportData.fetchDailyActivityData,
+        'iot-daily-activity':  reportData.fetchIoTDailyActivityData,
         'sprint-health':       reportData.fetchSprintHealthData,
         'info-needed':         reportData.fetchInfoNeededData,
         'sprint-bug-analysis': reportData.fetchSprintBugAnalysisData,
@@ -310,10 +311,12 @@ const server = http.createServer(async (req, res) => {
       // Include date/sprintPath in cache keys so each selection is cached independently
       const date       = url.searchParams.get('date')       || '';
       const sprintPath = url.searchParams.get('sprintPath') || '';
-      // onhold uses date-stamped key so cache busts automatically on sprint transition
+      // date-stamped keys for reports that transition per sprint or per day
       const todayStr = new Date().toISOString().slice(0, 10);
       const cacheKey = (report === 'daily-activity' && date)
         ? `daily-activity_${date}`
+        : (report === 'iot-daily-activity' && date)
+        ? `iot-daily-activity_${date}`
         : (report === 'resource-effort' && sprintPath)
         ? `resource-effort_${sprintPath}`
         : report === 'onhold'

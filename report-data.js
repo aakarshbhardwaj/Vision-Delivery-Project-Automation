@@ -1176,6 +1176,37 @@ async function fetchDevQaEffortData(config, progress) {
 const DEV_TEAMS = new Set(['NEW-IR', 'DEV-MOB', 'DEV-Cloud', 'DEV-UI']);
 const QA_TEAMS  = new Set(['Testing Mobile', 'Testing QA']);
 
+// ── IoT Team Configuration ────────────────────────────────────────────────────
+
+const IOT_TEAM_NAME = 'IoT-Global';
+
+const IOT_RESOURCE_TEAMS = {
+  'Development-Mobile': ['Bhanu Teja Karri', 'Krunal Shah', 'Nikita Malik', 'Piyush Kumar'],
+  'Development-Web':    ['Srinivasan GR', 'Yogendra Babu'],
+  'Testing Mobile':     ['Akash Panchal', 'Kartik Gevariya', 'Mona Jani'],
+  'Testing':            ['Himanshu Dixit'],
+};
+
+const IOT_MEMBER_MAP = {};
+for (const [team, members] of Object.entries(IOT_RESOURCE_TEAMS)) {
+  for (const name of members) {
+    IOT_MEMBER_MAP[name.toLowerCase()] = { canonical: name, team };
+  }
+}
+
+function matchIoTMember(displayName) {
+  if (!displayName) return null;
+  const lower = displayName.toLowerCase();
+  if (IOT_MEMBER_MAP[lower]) return IOT_MEMBER_MAP[lower];
+  for (const [key, val] of Object.entries(IOT_MEMBER_MAP)) {
+    if (lower.includes(key) || key.includes(lower)) return val;
+  }
+  return null;
+}
+
+const IOT_DEV_TEAMS = new Set(['Development-Mobile', 'Development-Web']);
+const IOT_QA_TEAMS  = new Set(['Testing Mobile', 'Testing']);
+
 async function fetchDailyActivityData(config, progress, params) {
   const isAll = (params && params.date) === 'all';
   const _pad  = n => String(n).padStart(2, '0');
@@ -1501,6 +1532,322 @@ async function fetchDailyActivityData(config, progress, params) {
   }
 
   progress('Daily activity data ready.');
+  return {
+    date: isAll ? 'all' : date,
+    isAll, sprintStart, sprintEnd, teamGroups, teamOrder,
+    summary: { totalItems: allIds.length, inactiveMembers: totalInactive },
+  };
+}
+
+// ── IoT Daily Activity Data ───────────────────────────────────────────────────
+
+async function fetchIoTDailyActivityData(config, progress, params) {
+  const isAll = (params && params.date) === 'all';
+  const _pad  = n => String(n).padStart(2, '0');
+  const _fmt  = d => `${d.getFullYear()}-${_pad(d.getMonth()+1)}-${_pad(d.getDate())}`;
+
+  const defDay = new Date(); defDay.setDate(defDay.getDate() - 1);
+  while ([0, 6].includes(defDay.getDay())) defDay.setDate(defDay.getDate() - 1);
+  const date = (!isAll && params && params.date) ? params.date : _fmt(defDay);
+
+  const baseApi = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_apis`;
+  const adoBase = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_workitems/edit/`;
+
+  // Resolve IoT sprint path dynamically from ADO iterations
+  const sprintNum = resolveActiveSprintNum();
+  const iotSprintLeaf = `IoT Global_R${sprintNum}_Sprint ${sprintNum}.1`;
+  const tBase = `${config.org.replace(/\/$/,'')}/${encodeURIComponent(config.proj)}/${encodeURIComponent(IOT_TEAM_NAME)}/_apis`;
+  let iotSprintPath = null;
+  progress(`Resolving IoT sprint path for Sprint ${sprintNum}.1…`);
+  try {
+    const iters = await adoFetch(config, `${tBase}/work/teamsettings/iterations?api-version=7.1`);
+    const iter = (iters.value || []).find(i => i.name === iotSprintLeaf);
+    if (iter) iotSprintPath = (iter.path || '').replace(/\//g, '\\');
+  } catch (e) {
+    progress('Warning: could not fetch IoT iterations: ' + e.message);
+  }
+  if (!iotSprintPath) {
+    iotSprintPath = `${config.proj}\\IoT\\IoT Global R${sprintNum}\\${iotSprintLeaf}`;
+  }
+
+  const iotConfig = { ...config, team: IOT_TEAM_NAME, sprint: iotSprintPath };
+
+  progress('Loading IoT sprint capacity…');
+  const capData = await fetchCapacity(iotConfig);
+  const sprintStart = capData?.sprintStart ? _fmt(new Date(capData.sprintStart)) : null;
+  const sprintEnd   = capData?.sprintEnd   ? _fmt(new Date(capData.sprintEnd))   : null;
+
+  progress('Fetching IoT sprint Tasks and Bugs…');
+  const wiqlResp = await adoFetch(config, `${baseApi}/wit/wiql?api-version=7.1`, {
+    query: `SELECT [System.Id] FROM WorkItems WHERE [System.WorkItemType] IN ('Task','Bug') AND [System.IterationPath] = '${iotSprintPath}' ORDER BY [System.Id]`,
+  });
+  const allIds = (wiqlResp.workItems || []).map(w => w.id);
+  progress(`Found ${allIds.length} IoT sprint items. Fetching fields…`);
+
+  const fields = [
+    'System.Id', 'System.Title', 'System.WorkItemType', 'System.State',
+    'System.AssignedTo', 'System.ChangedDate',
+    'Microsoft.VSTS.Scheduling.CompletedWork',
+    'Microsoft.VSTS.Scheduling.RemainingWork',
+    BUG_F.fixedDev1, BUG_F.fixedDev2, BUG_F.fixedDev3, BUG_F.verifiedQA,
+    BUG_F.devComp, BUG_F.devRem, BUG_F.qaComp, BUG_F.qaRem,
+  ];
+  const rawItems = allIds.length ? await batchFetch(config, baseApi, allIds, fields) : [];
+
+  // Delta map — specific-date mode
+  const deltaMap = {};
+  if (!isAll && rawItems.length) {
+    const changedItems = rawItems.filter(item => {
+      const cd = fld(item, 'System.ChangedDate');
+      return cd && _fmt(new Date(cd)) >= date;
+    });
+    progress(`Computing deltas for ${changedItems.length} items (changed on or after ${date})…`);
+
+    const CHUNK = 8;
+    for (let i = 0; i < changedItems.length; i += CHUNK) {
+      const chunk = changedItems.slice(i, i + CHUNK);
+      await Promise.all(chunk.map(async raw => {
+        try {
+          const resp = await adoFetch(config, `${baseApi}/wit/workitems/${raw.id}/updates?api-version=7.1`);
+          let taskDelta = 0;
+          const devContribs = {}, qaContribs = {};
+          for (const u of (resp.value || [])) {
+            const f   = u.fields || {};
+            const cdF = f['System.ChangedDate'];
+            const revDateStr = (cdF && cdF.newValue) ? cdF.newValue : u.revisedDate;
+            if (!revDateStr || revDateStr.startsWith('9999') || _fmt(new Date(revDateStr)) !== date) continue;
+            const cw = f['Microsoft.VSTS.Scheduling.CompletedWork'];
+            if (cw) taskDelta += (Number(cw.newValue) || 0) - (Number(cw.oldValue) || 0);
+            const dc = f[BUG_F.devComp];
+            if (dc) {
+              const d = (Number(dc.newValue) || 0) - (Number(dc.oldValue) || 0);
+              if (d > 0) {
+                let fixedByNames = [BUG_F.fixedDev1, BUG_F.fixedDev2, BUG_F.fixedDev3]
+                  .map(fn => cleanName(fld(raw, fn))).filter(Boolean);
+                if (!fixedByNames.length) {
+                  const asgn = cleanName(fld(raw, 'System.AssignedTo'));
+                  const am = asgn && matchIoTMember(asgn);
+                  if (am && IOT_DEV_TEAMS.has(am.team)) fixedByNames = [am.canonical];
+                }
+                if (fixedByNames.length) {
+                  const share = +(d / fixedByNames.length).toFixed(2);
+                  for (const t of fixedByNames) devContribs[t] = (devContribs[t] || 0) + share;
+                }
+              }
+            }
+            const qc = f[BUG_F.qaComp];
+            if (qc) {
+              const d = (Number(qc.newValue) || 0) - (Number(qc.oldValue) || 0);
+              if (d > 0) {
+                const target = cleanName(fld(raw, BUG_F.verifiedQA));
+                if (target) qaContribs[target] = (qaContribs[target] || 0) + d;
+              }
+            }
+          }
+          if (taskDelta || Object.keys(devContribs).length || Object.keys(qaContribs).length) {
+            deltaMap[raw.id] = { taskDelta, devContribs, qaContribs };
+          }
+        } catch (_) {}
+      }));
+      if (i + CHUNK < changedItems.length) {
+        progress(`Revisions: ${Math.min(i + CHUNK, changedItems.length)}/${changedItems.length}…`);
+      }
+    }
+  }
+
+  // Build team groups
+  const teamGroups = {};
+  for (const [team, members] of Object.entries(IOT_RESOURCE_TEAMS)) {
+    const mData = {};
+    for (const m of members) {
+      const cap = capData?.memberCapacity?.[m] || {};
+      mData[m] = {
+        name: m,
+        availCapacity:  isAll ? (cap.totalCapacityHrs ?? null) : (cap.availableHrs ?? null),
+        capacityPerDay: cap.capacityPerDay ?? null,
+        remainingDays:  cap.remainingDays  ?? null,
+        taskComp: 0, taskRem: 0, taskItems: [],
+        bugComp:  0, bugRem:  0, bugItems:  [],
+        hasActivity: false,
+      };
+    }
+    teamGroups[team] = { teamName: team, memberList: [...members], members: mData };
+  }
+
+  const ensureMember = (team, name) => {
+    if (!teamGroups[team]) teamGroups[team] = { teamName: team, memberList: [], members: {} };
+    const tg = teamGroups[team];
+    if (!tg.members[name]) {
+      const cap = capData?.memberCapacity?.[name] || {};
+      tg.members[name] = {
+        name, availCapacity: cap.availableHrs ?? null, capacityPerDay: cap.capacityPerDay ?? null,
+        remainingDays: cap.remainingDays ?? null,
+        taskComp: 0, taskRem: 0, taskItems: [],
+        bugComp:  0, bugRem:  0, bugItems:  [],
+        hasActivity: false,
+      };
+      tg.memberList.push(name);
+    }
+    return tg.members[name];
+  };
+
+  for (const raw of rawItems) {
+    const type  = fld(raw, 'System.WorkItemType') || '';
+    const id    = raw.id;
+    const title = fld(raw, 'System.Title') || '';
+    const state = fld(raw, 'System.State') || '';
+    const url   = `${adoBase}${id}`;
+
+    if (type === 'Task') {
+      const assigned = cleanName(fld(raw, 'System.AssignedTo'));
+      const match    = matchIoTMember(assigned);
+      if (!match) continue;
+      const remHrs  = Number(fld(raw, 'Microsoft.VSTS.Scheduling.RemainingWork')) ?? 0;
+      const sprintComp = Number(fld(raw, 'Microsoft.VSTS.Scheduling.CompletedWork')) || 0;
+      let compVal = 0;
+      if (isAll) {
+        compVal = sprintComp;
+      } else {
+        const dm = deltaMap[id];
+        if (dm && dm.taskDelta > 0) compVal = dm.taskDelta;
+      }
+      const md = ensureMember(match.team, match.canonical);
+      md.taskComp += compVal; md.taskRem += remHrs;
+      if (compVal > 0) md.hasActivity = true;
+      md.taskItems.push({ id, title, state, url, compDelta: compVal, remHrs, active: compVal > 0, sprintComp });
+
+    } else if (type === 'Bug') {
+      if (isAll) {
+        const devComp = Number(fld(raw, BUG_F.devComp)) || 0;
+        const devRem  = Number(fld(raw, BUG_F.devRem))  || 0;
+        let devNames = [BUG_F.fixedDev1, BUG_F.fixedDev2, BUG_F.fixedDev3]
+          .map(f => cleanName(fld(raw, f))).filter(Boolean);
+        if (!devNames.length) {
+          const asgn = cleanName(fld(raw, 'System.AssignedTo'));
+          const am = asgn && matchIoTMember(asgn);
+          if (am && IOT_DEV_TEAMS.has(am.team)) devNames = [am.canonical];
+        }
+        const div = devNames.length || 1;
+        for (const dn of devNames) {
+          const m = matchIoTMember(dn);
+          if (!m || !IOT_DEV_TEAMS.has(m.team)) continue;
+          const share = +(devComp / div).toFixed(2);
+          const remShare = +(devRem / div).toFixed(2);
+          const md = ensureMember(m.team, m.canonical);
+          md.bugComp += share; md.bugRem += remShare;
+          if (share > 0) md.hasActivity = true;
+          md.bugItems.push({ id, title, state, url, compDelta: share, remHrs: remShare, role: 'DEV', active: share > 0, sprintComp: share });
+        }
+        const qaComp = Number(fld(raw, BUG_F.qaComp)) || 0;
+        const qaRem  = Number(fld(raw, BUG_F.qaRem))  || 0;
+        const qaName = cleanName(fld(raw, BUG_F.verifiedQA));
+        if (qaName) {
+          const m = matchIoTMember(qaName);
+          if (m && IOT_QA_TEAMS.has(m.team)) {
+            const md = ensureMember(m.team, m.canonical);
+            md.bugComp += qaComp; md.bugRem += qaRem;
+            if (qaComp > 0) md.hasActivity = true;
+            md.bugItems.push({ id, title, state, url, compDelta: qaComp, remHrs: qaRem, role: 'QA', active: qaComp > 0, sprintComp: qaComp });
+          }
+        }
+      } else {
+        const dm = deltaMap[id];
+        if (!dm) continue;
+        const devRem = Number(fld(raw, BUG_F.devRem)) || 0;
+        const qaRem  = Number(fld(raw, BUG_F.qaRem))  || 0;
+        const bugDevSprintComp = Number(fld(raw, BUG_F.devComp)) || 0;
+        const bugQaSprintComp  = Number(fld(raw, BUG_F.qaComp))  || 0;
+        for (const [who, delta] of Object.entries(dm.devContribs)) {
+          const m = matchIoTMember(who);
+          if (!m || !IOT_DEV_TEAMS.has(m.team)) continue;
+          const md = ensureMember(m.team, m.canonical);
+          md.bugComp += delta; md.bugRem += devRem; md.hasActivity = true;
+          md.bugItems.push({ id, title, state, url, compDelta: delta, remHrs: devRem, role: 'DEV', active: true, sprintComp: bugDevSprintComp });
+        }
+        for (const [who, delta] of Object.entries(dm.qaContribs)) {
+          const m = matchIoTMember(who);
+          if (!m || !IOT_QA_TEAMS.has(m.team)) continue;
+          const md = ensureMember(m.team, m.canonical);
+          md.bugComp += delta; md.bugRem += qaRem; md.hasActivity = true;
+          md.bugItems.push({ id, title, state, url, compDelta: delta, remHrs: qaRem, role: 'QA', active: true, sprintComp: bugQaSprintComp });
+        }
+      }
+    }
+  }
+
+  // Remaining work pass (daily mode — keep Rem column complete)
+  if (!isAll) {
+    for (const raw of rawItems) {
+      if ((fld(raw, 'System.WorkItemType') || '') !== 'Task') continue;
+      const id = raw.id;
+      const assigned = cleanName(fld(raw, 'System.AssignedTo'));
+      const match = matchIoTMember(assigned);
+      if (!match) continue;
+      const md = teamGroups[match.team]?.members[match.canonical];
+      if (!md || md.taskItems.some(i => i.id === id)) continue;
+      const remHrs    = Number(fld(raw, 'Microsoft.VSTS.Scheduling.RemainingWork')) ?? 0;
+      const sprintComp = Number(fld(raw, 'Microsoft.VSTS.Scheduling.CompletedWork')) || 0;
+      md.taskRem += remHrs;
+      md.taskItems.push({ id, title: fld(raw, 'System.Title') || '', state: fld(raw, 'System.State') || '',
+        url: `${adoBase}${id}`, compDelta: 0, remHrs, active: false, sprintComp });
+    }
+    for (const raw of rawItems) {
+      if ((fld(raw, 'System.WorkItemType') || '') !== 'Bug') continue;
+      const id    = raw.id;
+      const title = fld(raw, 'System.Title') || '';
+      const state = fld(raw, 'System.State') || '';
+      const url   = `${adoBase}${id}`;
+      const devComp = Number(fld(raw, BUG_F.devComp)) || 0;
+      const devRem  = Number(fld(raw, BUG_F.devRem))  || 0;
+      const qaComp  = Number(fld(raw, BUG_F.qaComp))  || 0;
+      const qaRem   = Number(fld(raw, BUG_F.qaRem))   || 0;
+      if (devComp > 0) {
+        const devNames = [BUG_F.fixedDev1, BUG_F.fixedDev2, BUG_F.fixedDev3]
+          .map(fn => cleanName(fld(raw, fn))).filter(Boolean);
+        const div = devNames.length || 1;
+        for (const dn of devNames) {
+          const m = matchIoTMember(dn);
+          if (!m || !IOT_DEV_TEAMS.has(m.team)) continue;
+          const md = teamGroups[m.team]?.members[m.canonical];
+          if (!md || md.bugItems.some(i => i.id === id)) continue;
+          const share = +(devComp / div).toFixed(2);
+          md.bugItems.push({ id, title, state, url, compDelta: 0, remHrs: +(devRem/div).toFixed(2), role: 'DEV', active: false, sprintComp: share });
+        }
+      }
+      if (qaComp > 0) {
+        const qaName = cleanName(fld(raw, BUG_F.verifiedQA));
+        if (!qaName) continue;
+        const m = matchIoTMember(qaName);
+        if (!m || !IOT_QA_TEAMS.has(m.team)) continue;
+        const md = teamGroups[m.team]?.members[m.canonical];
+        if (!md || md.bugItems.some(i => i.id === id)) continue;
+        md.bugItems.push({ id, title, state, url, compDelta: 0, remHrs: qaRem, role: 'QA', active: false, sprintComp: qaComp });
+      }
+    }
+  }
+
+  // Team summaries
+  let totalInactive = 0;
+  const teamOrder = Object.keys(IOT_RESOURCE_TEAMS);
+  for (const team of teamOrder) {
+    const tg = teamGroups[team];
+    if (!tg) continue;
+    let avail = 0, taskComp = 0, taskRem = 0, bugComp = 0, bugRem = 0, active = 0, inactive = 0;
+    for (const m of tg.memberList) {
+      const md = tg.members[m];
+      if (!md) continue;
+      avail    += md.availCapacity || 0;
+      taskComp  = +(taskComp + md.taskComp).toFixed(2);
+      taskRem   = +(taskRem  + md.taskRem).toFixed(2);
+      bugComp   = +(bugComp  + md.bugComp).toFixed(2);
+      bugRem    = +(bugRem   + md.bugRem).toFixed(2);
+      if (md.hasActivity) active++; else inactive++;
+    }
+    totalInactive += inactive;
+    tg.summary = { avail, taskComp, taskRem, bugComp, bugRem, active, inactive, total: tg.memberList.length };
+  }
+
+  progress('IoT Daily Activity data ready.');
   return {
     date: isAll ? 'all' : date,
     isAll, sprintStart, sprintEnd, teamGroups, teamOrder,
@@ -2323,4 +2670,4 @@ async function fetchSupportTicketsData(config, progress) {
   return { tickets, totals: { total: tickets.length, byState, byType, byAssignee }, queryName };
 }
 
-module.exports = { resolveActiveSprintNum, fetchOnHoldData, fetchResourceHoursData, fetchThreeWayData, fetchChildBugsData, fetchDatabaseEffortData, fetchDevQaEffortData, fetchDailyActivityData, fetchSprintHealthData, fetchInfoNeededData, fetchSprintBugAnalysisData, fetchMemberCapacityReport, fetchSprintList, fetchUpcomingSprintData, fetchSupportTicketsData };
+module.exports = { resolveActiveSprintNum, fetchOnHoldData, fetchResourceHoursData, fetchThreeWayData, fetchChildBugsData, fetchDatabaseEffortData, fetchDevQaEffortData, fetchDailyActivityData, fetchIoTDailyActivityData, fetchSprintHealthData, fetchInfoNeededData, fetchSprintBugAnalysisData, fetchMemberCapacityReport, fetchSprintList, fetchUpcomingSprintData, fetchSupportTicketsData };

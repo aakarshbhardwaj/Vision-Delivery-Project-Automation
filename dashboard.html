@@ -1055,12 +1055,21 @@ tr:last-child td { border-bottom: none; }
             <span class="qi-name">IoT Release Calendar 2026</span>
             <span class="rpt-badge">2026</span>
           </div>
-          <div style="margin:6px 12px 4px;padding:8px 12px;border-radius:8px;border:1px dashed rgba(32,201,151,.25);background:rgba(32,201,151,.04)">
-            <div style="display:flex;align-items:center;gap:7px;margin-bottom:4px">
-              <span style="font-size:13px">🚀</span>
-              <span style="font-size:10px;font-weight:700;color:#5dd9b5;letter-spacing:.05em;text-transform:uppercase">More reports brewing</span>
+          <!-- IoT Sprint Reports folder -->
+          <div class="folder" style="margin:4px 0 0">
+            <div class="folder-hdr" onclick="this.parentElement.classList.toggle('open')">
+              <span class="f-arrow">▶</span>
+              <span style="flex:1;font-size:11px;color:#20c997;font-weight:700">IoT Sprint Reports</span>
+              <span class="f-cnt">1</span>
             </div>
-            <div style="font-size:10px;color:var(--muted);line-height:1.5;padding-left:20px">IoT analytics &amp; insights<br>dropping soon…</div>
+            <div class="folder-body">
+              <div class="qi report-item" data-report="iot-daily-activity" data-name="IoT Daily Team Activity"
+                   onclick="selectReport(this)">
+                <span class="qi-dot"></span>
+                <span class="qi-name">IoT Daily Team Activity</span>
+                <span class="rpt-badge">Today</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1802,6 +1811,7 @@ const REPORT_META = {
   'three-way':          { name: 'IR Sprints Data Breakdown',   badge: 'Sprint ' + _sprintRangeBadge.replace('→',' → ') },
   'database-effort':    { name: 'IR DB Effort Report',         badge: 'Sprint 55.1+'        },
   'daily-activity':     { name: 'IR Daily Team Activity',      badge: 'Team-wise'           },
+  'iot-daily-activity': { name: 'IoT Daily Team Activity',     badge: 'Team-wise'           },
   'sprint-health':      { name: 'IR Sprint Health Check',      badge: 'Live'                },
   'onhold':             { name: 'IR On-Hold Report',           badge: 'Live'                },
   'info-needed':        { name: 'IR Info Needed Report',       badge: 'Ageing'              },
@@ -1850,7 +1860,7 @@ function selectReport(el) {
   const daCtrl  = document.getElementById('da-date-ctrl');
   const daInput = document.getElementById('da-date-input');
   const daAllBtn = document.getElementById('da-all-btn');
-  if (key === 'daily-activity') {
+  if (key === 'daily-activity' || key === 'iot-daily-activity') {
     daCtrl.style.display = 'flex';
     if (!daInput.value) {
       // Default: last working day
@@ -1939,6 +1949,8 @@ function refreshReport() {
   let cacheKey = activeReport;
   if (activeReport === 'daily-activity' && window._daDate)
     cacheKey = `daily-activity_${window._daDate}`;
+  else if (activeReport === 'iot-daily-activity' && window._daDate)
+    cacheKey = `iot-daily-activity_${window._daDate}`;
   else if (activeReport === 'resource-effort' && window._reSprint)
     cacheKey = `resource-effort_${window._reSprint}`;
   fetch(`/api/report-cache-clear?report=${encodeURIComponent(cacheKey)}`)
@@ -1952,6 +1964,9 @@ function applyDaDate() {
   if (activeReport === 'daily-activity') {
     fetch(`/api/report-cache-clear?report=daily-activity_${window._daDate}`)
       .then(() => streamReportData('daily-activity'));
+  } else if (activeReport === 'iot-daily-activity') {
+    fetch(`/api/report-cache-clear?report=iot-daily-activity_${window._daDate}`)
+      .then(() => streamReportData('iot-daily-activity'));
   }
 }
 
@@ -1962,6 +1977,9 @@ function applyDaAll() {
   if (activeReport === 'daily-activity') {
     fetch('/api/report-cache-clear?report=daily-activity_all')
       .then(() => streamReportData('daily-activity'));
+  } else if (activeReport === 'iot-daily-activity') {
+    fetch('/api/report-cache-clear?report=iot-daily-activity_all')
+      .then(() => streamReportData('iot-daily-activity'));
   }
 }
 
@@ -2015,7 +2033,7 @@ function streamReportData(key) {
   refreshBtn.disabled = true;
   refreshBtn.textContent = '⏳ Loading…';
 
-  const esUrl = (key === 'daily-activity' && window._daDate)
+  const esUrl = ((key === 'daily-activity' || key === 'iot-daily-activity') && window._daDate)
     ? `/api/report-data?report=${key}&date=${window._daDate}`
     : (key === 'resource-effort' && window._reSprint)
     ? `/api/report-data?report=${key}&sprintPath=${encodeURIComponent(window._reSprint)}`
@@ -2054,7 +2072,8 @@ function streamReportData(key) {
       else if (key === 'onhold')            renderOnHold(data.payload);
       else if (key === 'child-bugs')        renderChildBugs(data.payload);
       else if (key === 'database-effort')   renderDatabaseEffort(data.payload);
-      else if (key === 'daily-activity')    renderDailyActivity(data.payload);
+      else if (key === 'daily-activity')         renderDailyActivity(data.payload);
+      else if (key === 'iot-daily-activity')     renderDailyActivity(data.payload);
       else if (key === 'sprint-health')     renderSprintHealth(data.payload);
       else if (key === 'info-needed')         renderInfoNeeded(data.payload);
       else if (key === 'sprint-bug-analysis') renderSprintBugAnalysis(data.payload);
@@ -3274,12 +3293,17 @@ window.dbCardClick = function(filter) {
 // ── Daily Activity — Member-wise Capacity + Completed + Remaining ─────────────
 
 const DA_TEAM_COLORS = {
-  'NEW-IR':         { accent: '#4caf7d', bg: 'rgba(76,175,125,0.08)',  border: 'rgba(76,175,125,0.3)'  },
-  'DEV-MOB':        { accent: '#7c5cbf', bg: 'rgba(124,92,191,0.08)', border: 'rgba(124,92,191,0.3)' },
-  'DEV-Cloud':      { accent: '#4f8ef7', bg: 'rgba(79,142,247,0.08)', border: 'rgba(79,142,247,0.3)' },
-  'DEV-UI':         { accent: '#20c997', bg: 'rgba(32,201,151,0.08)', border: 'rgba(32,201,151,0.3)' },
-  'Testing Mobile': { accent: '#e05252', bg: 'rgba(224,82,82,0.08)',  border: 'rgba(224,82,82,0.3)'  },
-  'Testing QA':     { accent: '#e09a40', bg: 'rgba(224,154,64,0.08)', border: 'rgba(224,154,64,0.3)' },
+  // IR teams
+  'NEW-IR':              { accent: '#4caf7d', bg: 'rgba(76,175,125,0.08)',  border: 'rgba(76,175,125,0.3)'  },
+  'DEV-MOB':             { accent: '#7c5cbf', bg: 'rgba(124,92,191,0.08)', border: 'rgba(124,92,191,0.3)' },
+  'DEV-Cloud':           { accent: '#4f8ef7', bg: 'rgba(79,142,247,0.08)', border: 'rgba(79,142,247,0.3)' },
+  'DEV-UI':              { accent: '#20c997', bg: 'rgba(32,201,151,0.08)', border: 'rgba(32,201,151,0.3)' },
+  'Testing Mobile':      { accent: '#e05252', bg: 'rgba(224,82,82,0.08)',  border: 'rgba(224,82,82,0.3)'  },
+  'Testing QA':          { accent: '#e09a40', bg: 'rgba(224,154,64,0.08)', border: 'rgba(224,154,64,0.3)' },
+  // IoT teams
+  'Development-Mobile':  { accent: '#7c5cbf', bg: 'rgba(124,92,191,0.08)', border: 'rgba(124,92,191,0.3)' },
+  'Development-Web':     { accent: '#4f8ef7', bg: 'rgba(79,142,247,0.08)', border: 'rgba(79,142,247,0.3)' },
+  'Testing':             { accent: '#e09a40', bg: 'rgba(224,154,64,0.08)', border: 'rgba(224,154,64,0.3)' },
 };
 
 function _daStateClass(s) {
