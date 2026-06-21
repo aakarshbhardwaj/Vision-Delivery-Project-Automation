@@ -310,10 +310,14 @@ const server = http.createServer(async (req, res) => {
       // Include date/sprintPath in cache keys so each selection is cached independently
       const date       = url.searchParams.get('date')       || '';
       const sprintPath = url.searchParams.get('sprintPath') || '';
+      // onhold uses date-stamped key so cache busts automatically on sprint transition
+      const todayStr = new Date().toISOString().slice(0, 10);
       const cacheKey = (report === 'daily-activity' && date)
         ? `daily-activity_${date}`
         : (report === 'resource-effort' && sprintPath)
         ? `resource-effort_${sprintPath}`
+        : report === 'onhold'
+        ? `onhold_${todayStr}`
         : report;
 
       // Check cache
@@ -471,10 +475,12 @@ const server = http.createServer(async (req, res) => {
 
     // ── API: config ───────────────────────────────────────────────────────────
     if (url.pathname === '/api/config') {
+      const activeSprintNum = reportData.resolveActiveSprintNum();
+      const activeSprint = `IR_R${activeSprintNum}_Sprint ${activeSprintNum}.1`;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         project : config.proj,
-        sprint  : (config.sprint || '').split('\\').pop(),
+        sprint  : activeSprint,
         team    : config.team || '',
       }));
     }

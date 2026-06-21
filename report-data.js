@@ -100,14 +100,8 @@ async function fetchOnHoldData(config, progress) {
   const baseApi = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_apis`;
   const adoBase = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_workitems/edit/`;
 
-  // Resolve active sprint dynamically from the IR release calendar.
-  // Look 1 day ahead so the report pre-transitions on the final day of the current sprint
-  // (e.g. on 21 Jun it already shows Sprint 57.1 which starts 22 Jun).
-  const _today = new Date(); _today.setHours(0, 0, 0, 0);
-  const _ref = new Date(_today); _ref.setDate(_ref.getDate() + 1);
-  const _started = SPRINT_SCHEDULE_3W.filter(s => new Date(s.start + 'T00:00:00') <= _ref);
-  const _cur = _started.length ? _started[_started.length - 1] : SPRINT_SCHEDULE_3W[0];
-  const _sprintNum = _cur.num;
+  // Resolve active sprint dynamically (1-day look-ahead — see resolveActiveSprintNum)
+  const _sprintNum = resolveActiveSprintNum();
   const sprintPath = `${config.proj}\\IR\\Release ${_sprintNum}\\IR_R${_sprintNum}_Sprint ${_sprintNum}.1`;
   const sprintLabel = `${_sprintNum}.1`;
 
@@ -470,7 +464,7 @@ async function fetchResourceHoursData(config, progress) {
   return { items, teamStats, allResources, teams: RESOURCE_TEAMS, capData };
 }
 
-// ── Three-Way Data ───────────────────────────────────────────────────────────
+// ── Sprint Schedule & shared resolver ────────────────────────────────────────
 
 const SPRINT_SCHEDULE_3W = [
   { num:53, start:'2026-01-05' }, { num:54, start:'2026-02-16' },
@@ -479,6 +473,17 @@ const SPRINT_SCHEDULE_3W = [
   { num:59, start:'2026-09-14' }, { num:60, start:'2026-10-26' },
   { num:61, start:'2026-11-07' },
 ];
+
+// Resolves the active sprint number using a 1-day look-ahead so the dashboard
+// pre-transitions to the incoming sprint on the final day of the current one.
+function resolveActiveSprintNum() {
+  const ref = new Date(); ref.setHours(0, 0, 0, 0);
+  ref.setDate(ref.getDate() + 1);
+  const started = SPRINT_SCHEDULE_3W.filter(s => new Date(s.start + 'T00:00:00') <= ref);
+  const cur = started.length ? started[started.length - 1] : SPRINT_SCHEDULE_3W[0];
+  return cur.num;
+}
+
 function computeThreeWayWindow() {
   const today = new Date(); today.setHours(0,0,0,0);
   const started = SPRINT_SCHEDULE_3W.filter(s => new Date(s.start+'T00:00:00') <= today);
@@ -2318,4 +2323,4 @@ async function fetchSupportTicketsData(config, progress) {
   return { tickets, totals: { total: tickets.length, byState, byType, byAssignee }, queryName };
 }
 
-module.exports = { fetchOnHoldData, fetchResourceHoursData, fetchThreeWayData, fetchChildBugsData, fetchDatabaseEffortData, fetchDevQaEffortData, fetchDailyActivityData, fetchSprintHealthData, fetchInfoNeededData, fetchSprintBugAnalysisData, fetchMemberCapacityReport, fetchSprintList, fetchUpcomingSprintData, fetchSupportTicketsData };
+module.exports = { resolveActiveSprintNum, fetchOnHoldData, fetchResourceHoursData, fetchThreeWayData, fetchChildBugsData, fetchDatabaseEffortData, fetchDevQaEffortData, fetchDailyActivityData, fetchSprintHealthData, fetchInfoNeededData, fetchSprintBugAnalysisData, fetchMemberCapacityReport, fetchSprintList, fetchUpcomingSprintData, fetchSupportTicketsData };
