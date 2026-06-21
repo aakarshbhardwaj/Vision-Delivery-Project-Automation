@@ -1,0 +1,14 @@
+{
+  "name": "vg-ir-delivery-dashboard",
+  "version": "1.0.0",
+  "description": "VG Azure DevOps IR Delivery Dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {}
+}

@@ -1,4 +1,4 @@
-# Secret config — contains PAT token, never commit this
+# Secret config — contains PAT token, NEVER commit this
 .config.json
 
 # Claude Code local settings
@@ -12,3 +12,7 @@ reports/
 
 # Node
 node_modules/
+
+# Azure deployment artefacts
+deploy.zip
+.deployment

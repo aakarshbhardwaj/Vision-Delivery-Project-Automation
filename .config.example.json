@@ -4,5 +4,9 @@
   "pat":            "YOUR-PERSONAL-ACCESS-TOKEN",
   "team":           "IR",
   "sprint":         "Product-Development\\IR\\Release 56\\IR_R56_Sprint 56.1",
-  "reportFolderId": "YOUR-REPORT-FOLDER-ID"
+  "reportFolderId": "YOUR-REPORT-FOLDER-ID",
+
+  "teamsTenantId":    "YOUR-AAD-TENANT-ID",
+  "teamsClientId":    "YOUR-APP-REGISTRATION-CLIENT-ID",
+  "teamsClientSecret":"YOUR-APP-REGISTRATION-CLIENT-SECRET"
 }
