@@ -166,7 +166,7 @@ async function fetchOnHoldData(config, progress) {
 // ── Resource Hours Data ──────────────────────────────────────────────────────
 
 const RESOURCE_TEAMS = {
-  'DEV-Cloud':       ['Chandra Shekhar', 'Pradeep Kumar', 'Shailendra Pal', 'Ravi Goswami', 'P Aftab Hussain', 'Saksham Solanki', 'Piyush Dass', 'Rajveer Singh', 'Vinoth S', 'Deepanshu Jain', 'Srinivasan GR', 'Sandeep Kumar'],
+  'DEV-Cloud':       ['Chandra Shekhar', 'Pradeep Kumar', 'Shailendra Pal', 'Ravi Goswami', 'P Aftab Hussain', 'Saksham Solanki', 'Piyush Dass', 'Rajveer Singh', 'Vinoth S', 'Deepanshu Jain', 'Srinivasan GR'],
   'DEV-UI':          ['Prashant Chaudhary', 'Sujit Kumar', 'Avdhesh Kumar', 'Primal Viola Miranda', 'Dinesh Rai', 'Akshat Agarwal', 'Karmjeet Singh', 'Pawan Prasad P', 'Santosh Kumar'],
   'DEV-MOB':         ['Ashwani Kumar', 'Prince Sindhu', 'Rinkesh Patel', 'Shivani Patel', 'Krunal Shah', 'Nikita Malik'],
   'Testing Mobile':  ['Anoop Maurya', 'Rahul Singh'],
@@ -227,9 +227,15 @@ function countWorkdays(from, to, offRanges) {
 }
 
 // Fetch team capacity from ADO Team Capacity API (sprint-agnostic via config.sprint)
-async function fetchCapacity(config, matchFn) {
+// opts.activityMap — when supplied, the team roster is derived from each member's
+//   capacity-board Activity (Activity name → team label) and ALL mapped members are
+//   included, regardless of any static roster. The resolved roster is returned as
+//   `resourceTeams` ({ team: [names] }). Used by the IR Daily Team Activity report so
+//   membership tracks the live capacity board across sprint transitions.
+async function fetchCapacity(config, matchFn, opts) {
   if (!config.team) return null;
   const _matchFn = matchFn || matchMember;
+  const activityMap = opts && opts.activityMap;
   try {
     const tBase = `${config.org.replace(/\/$/,'')}/${encodeURIComponent(config.proj)}/${encodeURIComponent(config.team)}/_apis`;
     const iters = await adoFetch(config, `${tBase}/work/teamsettings/iterations?api-version=7.1`);
@@ -258,10 +264,25 @@ async function fetchCapacity(config, matchFn) {
     // API returns { teamMembers: [...] } not { value: [...] }
     const members = caps.teamMembers || caps.value || [];
     const memberCapacity = {};
+    const resourceTeams = {};   // team → [canonical names], built when activityMap is set
     for (const cap of members) {
       const nm = cap.teamMember?.displayName || '';
-      const m  = _matchFn(nm);
-      if (!m) continue;
+
+      // Resolve the member's canonical name + team — either from the capacity-board
+      // Activity (dynamic roster) or via the supplied/static matcher.
+      let canonical, team;
+      if (activityMap) {
+        const actName = (cap.activities || []).map(a => a.name).find(Boolean) || '';
+        team = activityMap[actName];
+        if (!team) continue;                  // activity not mapped to a known team → skip
+        canonical = cleanName(nm) || nm;
+        (resourceTeams[team] = resourceTeams[team] || []).push(canonical);
+      } else {
+        const m = _matchFn(nm);
+        if (!m) continue;
+        canonical = m.canonical;
+        team      = m.team;
+      }
       const cpd = (cap.activities || []).reduce((a, act) => a + (act.capacityPerDay || 0), 0);
 
       // memOffRemaining = member's individual planned leave days within the remaining sprint
@@ -277,7 +298,8 @@ async function fetchCapacity(config, matchFn) {
       const allOff = [...teamOff, ...(cap.daysOff || [])];
       const elapsedDays = countWorkdays(sprintStart, today, allOff);
 
-      memberCapacity[m.canonical] = {
+      memberCapacity[canonical] = {
+        team,
         capacityPerDay:   cpd,
         availableHrs:     +(availDays * cpd).toFixed(1),
         totalCapacityHrs: +(totalDays * cpd).toFixed(1),
@@ -287,7 +309,7 @@ async function fetchCapacity(config, matchFn) {
         reqHrsTillDate:   +(elapsedDays * cpd).toFixed(1),
       };
     }
-    return { memberCapacity, sprintRemainingDays, sprintEnd, sprintStart };
+    return { memberCapacity, sprintRemainingDays, sprintEnd, sprintStart, resourceTeams };
   } catch (_) {
     return null;
   }
@@ -895,9 +917,12 @@ async function fetchChildBugsData(config, progress) {
       fixedByDevMap[b.fixedByDev1].byType[b.bugType] = (fixedByDevMap[b.fixedByDev1].byType[b.bugType] || 0) + 1;
     }
   }
+  // Team roster from the current sprint's capacity board (auto-updates each sprint)
+  const { resourceTeams: _dynTeams } = await getIRRoster(config, resolveActiveSprintNum());
+
   // Build team lookup for DEV members
   const devTeamLookup = {};
-  for (const [team, members] of Object.entries(RESOURCE_TEAMS)) {
+  for (const [team, members] of Object.entries(_dynTeams)) {
     if (DEV_TEAMS.has(team)) {
       for (const name of members) devTeamLookup[name.toLowerCase()] = team;
     }
@@ -908,7 +933,7 @@ async function fetchChildBugsData(config, progress) {
 
   // Zero-bug heroes: DEV members with no bugs attributed to them in this report
   const fixedDevSetLower = new Set(Object.keys(fixedByDevMap).map(n => n.toLowerCase()));
-  const allDevMembers = Object.entries(RESOURCE_TEAMS)
+  const allDevMembers = Object.entries(_dynTeams)
     .filter(([team]) => DEV_TEAMS.has(team))
     .flatMap(([team, members]) => members.map(name => ({ name, team })));
   const zeroBugsDevList = allDevMembers
@@ -1177,6 +1202,66 @@ async function fetchDevQaEffortData(config, progress) {
 const DEV_TEAMS = new Set(['NEW-IR', 'DEV-MOB', 'DEV-Cloud', 'DEV-UI']);
 const QA_TEAMS  = new Set(['Testing Mobile', 'Testing QA']);
 
+// ADO capacity-board "Activity" → dashboard team label (IR). This is the source
+// of truth for the IR Daily Team Activity roster, so when a sprint transitions
+// the team membership auto-updates from whoever is planned on the new sprint's
+// capacity board — no code change needed each sprint.
+const IR_ACTIVITY_TO_TEAM = {
+  'Development':        'DEV-Cloud',
+  'Development-UI':     'DEV-UI',
+  'Development-Mobile': 'DEV-MOB',
+  'Testing':           'Testing QA',
+  'Testing Mobile':    'Testing Mobile',
+  'New-IR':            'NEW-IR',
+};
+const IR_TEAM_ORDER = ['DEV-Cloud', 'DEV-UI', 'DEV-MOB', 'NEW-IR', 'Testing QA', 'Testing Mobile'];
+
+// Build a { resourceTeams, match } pair from a capacity result's `resourceTeams`
+// (produced by fetchCapacity(..., { activityMap })). The roster is ordered by
+// IR_TEAM_ORDER. Falls back to the static RESOURCE_TEAMS / matchMember if the
+// capacity board returned nothing — so reports degrade gracefully if ADO is down.
+function buildIRRoster(capData) {
+  if (capData && capData.resourceTeams && Object.keys(capData.resourceTeams).length) {
+    const raw = capData.resourceTeams;
+    const resourceTeams = {};
+    for (const t of IR_TEAM_ORDER)    if (raw[t] && raw[t].length)                       resourceTeams[t] = raw[t];
+    for (const t of Object.keys(raw)) if (!resourceTeams[t] && raw[t] && raw[t].length)  resourceTeams[t] = raw[t];
+    const mm = {};
+    for (const [team, mems] of Object.entries(resourceTeams))
+      for (const nm of mems) mm[nm.toLowerCase()] = { canonical: nm, team };
+    const match = (dn) => {
+      if (!dn) return null;
+      const l = dn.toLowerCase();
+      if (mm[l]) return mm[l];
+      for (const [k, v] of Object.entries(mm)) if (l.includes(k)) return v;
+      return null;
+    };
+    return { resourceTeams, match };
+  }
+  return { resourceTeams: RESOURCE_TEAMS, match: matchMember };
+}
+
+// Resolve the IR roster for a given sprint number directly from that sprint's
+// capacity board, memoised per sprint (10-min TTL). Used by reports that don't
+// otherwise fetch capacity (e.g. Child Bugs).
+const _irRosterCache = {};
+async function getIRRoster(config, sprintNum) {
+  const key = String(sprintNum);
+  const now = Date.now();
+  const c = _irRosterCache[key];
+  if (c && (now - c.ts) < 600000) return c.roster;
+  const sprintPath = `${config.proj}\\IR\\Release ${sprintNum}\\IR_R${sprintNum}_Sprint ${sprintNum}.1`;
+  let roster;
+  try {
+    const cap = await fetchCapacity({ ...config, team: config.team || 'IR', sprint: sprintPath }, null, { activityMap: IR_ACTIVITY_TO_TEAM });
+    roster = buildIRRoster(cap);
+  } catch (_) {
+    roster = { resourceTeams: RESOURCE_TEAMS, match: matchMember };
+  }
+  _irRosterCache[key] = { roster, ts: now };
+  return roster;
+}
+
 // ── IoT Team Configuration ────────────────────────────────────────────────────
 
 const IOT_TEAM_NAME = 'IoT-Global';
@@ -1227,9 +1312,14 @@ async function fetchDailyActivityData(config, progress, params) {
 
   // ── Sprint capacity ───────────────────────────────────────────────────
   progress('Loading sprint capacity…');
-  const capData = await fetchCapacity(irConfig);
+  const capData = await fetchCapacity(irConfig, null, { activityMap: IR_ACTIVITY_TO_TEAM });
   const sprintStart = capData?.sprintStart ? _fmt(new Date(capData.sprintStart)) : null;
   const sprintEnd   = capData?.sprintEnd   ? _fmt(new Date(capData.sprintEnd))   : null;
+
+  // ── Dynamic team roster from the capacity board ───────────────────────
+  // Membership is whoever is planned on this sprint's capacity board, grouped by
+  // their Activity. Auto-updates on sprint transitions (see buildIRRoster).
+  const { resourceTeams: _dynTeams, match: _match } = buildIRRoster(capData);
 
   // ── All Tasks + Bugs for the sprint ──────────────────────────────────
   progress('Fetching sprint Tasks and Bugs…');
@@ -1292,7 +1382,7 @@ async function fetchDailyActivityData(config, progress, params) {
                   .map(fn => cleanName(fld(raw, fn))).filter(Boolean);
                 if (!fixedByNames.length) {
                   const asgn = cleanName(fld(raw, 'System.AssignedTo'));
-                  const am = asgn && matchMember(asgn);
+                  const am = asgn && _match(asgn);
                   if (am && DEV_TEAMS.has(am.team)) fixedByNames = [am.canonical];
                 }
                 if (fixedByNames.length) {
@@ -1325,7 +1415,7 @@ async function fetchDailyActivityData(config, progress, params) {
 
   // ── Build team groups ─────────────────────────────────────────────────
   const teamGroups = {};
-  for (const [team, members] of Object.entries(RESOURCE_TEAMS)) {
+  for (const [team, members] of Object.entries(_dynTeams)) {
     const mData = {};
     for (const m of members) {
       const cap = capData?.memberCapacity?.[m] || {};
@@ -1368,7 +1458,7 @@ async function fetchDailyActivityData(config, progress, params) {
 
     if (type === 'Task') {
       const assigned = cleanName(fld(raw, 'System.AssignedTo'));
-      const match    = matchMember(assigned);
+      const match    = _match(assigned);
       if (!match) continue;
 
       const remHrs = Number(fld(raw, 'Microsoft.VSTS.Scheduling.RemainingWork')) ?? 0;
@@ -1397,12 +1487,12 @@ async function fetchDailyActivityData(config, progress, params) {
           .map(f => cleanName(fld(raw, f))).filter(Boolean);
         if (!devNames.length) {
           const asgn = cleanName(fld(raw, 'System.AssignedTo'));
-          const am = asgn && matchMember(asgn);
+          const am = asgn && _match(asgn);
           if (am && DEV_TEAMS.has(am.team)) devNames = [am.canonical];
         }
         const div = devNames.length || 1;
         for (const dn of devNames) {
-          const m = matchMember(dn);
+          const m = _match(dn);
           if (!m || !DEV_TEAMS.has(m.team)) continue;
           const share = +(devComp / div).toFixed(2);
           const remShare = +(devRem / div).toFixed(2);
@@ -1416,7 +1506,7 @@ async function fetchDailyActivityData(config, progress, params) {
         const qaRem  = Number(fld(raw, BUG_F.qaRem))  || 0;
         const qaName = cleanName(fld(raw, BUG_F.verifiedQA));
         if (qaName) {
-          const m = matchMember(qaName);
+          const m = _match(qaName);
           if (m && QA_TEAMS.has(m.team)) {
             const md = ensureMember(m.team, m.canonical);
             md.bugComp += qaComp; md.bugRem += qaRem;
@@ -1433,7 +1523,7 @@ async function fetchDailyActivityData(config, progress, params) {
         const bugQaSprintComp  = Number(fld(raw, BUG_F.qaComp))  || 0;
 
         for (const [who, delta] of Object.entries(dm.devContribs)) {
-          const m = matchMember(who);
+          const m = _match(who);
           if (!m || !DEV_TEAMS.has(m.team)) continue;
           const md = ensureMember(m.team, m.canonical);
           md.bugComp += delta; md.bugRem += devRem;
@@ -1441,7 +1531,7 @@ async function fetchDailyActivityData(config, progress, params) {
           md.bugItems.push({ id, title, state, url, compDelta: delta, remHrs: devRem, role: 'DEV', active: true, sprintComp: bugDevSprintComp });
         }
         for (const [who, delta] of Object.entries(dm.qaContribs)) {
-          const m = matchMember(who);
+          const m = _match(who);
           if (!m || !QA_TEAMS.has(m.team)) continue;
           const md = ensureMember(m.team, m.canonical);
           md.bugComp += delta; md.bugRem += qaRem;
@@ -1458,7 +1548,7 @@ async function fetchDailyActivityData(config, progress, params) {
       if ((fld(raw, 'System.WorkItemType') || '') !== 'Task') continue;
       const id = raw.id;
       const assigned = cleanName(fld(raw, 'System.AssignedTo'));
-      const match = matchMember(assigned);
+      const match = _match(assigned);
       if (!match) continue;
       const md = teamGroups[match.team]?.members[match.canonical];
       if (!md) continue;
@@ -1490,7 +1580,7 @@ async function fetchDailyActivityData(config, progress, params) {
           .map(fn => cleanName(fld(raw, fn))).filter(Boolean);
         const div = devNames.length || 1;
         for (const dn of devNames) {
-          const m = matchMember(dn);
+          const m = _match(dn);
           if (!m || !DEV_TEAMS.has(m.team)) continue;
           const md = teamGroups[m.team]?.members[m.canonical];
           if (!md) continue;
@@ -1504,7 +1594,7 @@ async function fetchDailyActivityData(config, progress, params) {
       if (qaComp > 0) {
         const qaName = cleanName(fld(raw, BUG_F.verifiedQA));
         if (!qaName) continue;
-        const m = matchMember(qaName);
+        const m = _match(qaName);
         if (!m || !QA_TEAMS.has(m.team)) continue;
         const md = teamGroups[m.team]?.members[m.canonical];
         if (!md) continue;
@@ -1516,7 +1606,7 @@ async function fetchDailyActivityData(config, progress, params) {
 
   // ── Team summaries ────────────────────────────────────────────────────
   let totalInactive = 0;
-  const teamOrder = Object.keys(RESOURCE_TEAMS);
+  const teamOrder = Object.keys(_dynTeams);
   for (const team of teamOrder) {
     const tg = teamGroups[team];
     if (!tg) continue;
@@ -1891,6 +1981,8 @@ async function fetchSprintHealthData(config, progress) {
     'Microsoft.VSTS.Common.Severity', 'System.AssignedTo',
     'System.Tags', 'System.IterationPath', 'System.AreaPath',
     'System.CreatedDate', 'System.ChangedDate',
+    'Custom.ActualCloudorPortalDeliveryDate',
+    'Custom.ActualMobileDeliveryDate',
   ];
   const rawItems = await batchFetch(config, baseApi, allIds, FIELDS);
   progress('Building sprint health matrix…');
@@ -1906,17 +1998,19 @@ async function fetchSprintHealthData(config, progress) {
     const st  = f('System.State') || 'Unknown';
     stateSet.add(st);
     return {
-      id:            raw.id,
-      url:           adoBase + raw.id,
-      title:         f('System.Title') || '',
-      state:         st,
-      type:          f('System.WorkItemType') || '',
-      severity:      sev,
-      priorityLabel: sev,   // kept as priorityLabel for pivot compatibility
-      assignedTo:    cleanName(f('System.AssignedTo')),
-      iterationPath: f('System.IterationPath') || '',
-      tags:          f('System.Tags') || '',
-      changedDate:   f('System.ChangedDate') || '',
+      id:                    raw.id,
+      url:                   adoBase + raw.id,
+      title:                 f('System.Title') || '',
+      state:                 st,
+      type:                  f('System.WorkItemType') || '',
+      severity:              sev,
+      priorityLabel:         sev,   // kept as priorityLabel for pivot compatibility
+      assignedTo:            cleanName(f('System.AssignedTo')),
+      iterationPath:         f('System.IterationPath') || '',
+      tags:                  f('System.Tags') || '',
+      changedDate:           f('System.ChangedDate') || '',
+      cloudDeliveryDate:     f('Custom.ActualCloudorPortalDeliveryDate') || '',
+      mobileDeliveryDate:    f('Custom.ActualMobileDeliveryDate') || '',
     };
   });
 
@@ -2210,20 +2304,26 @@ async function fetchInfoNeededData(config, progress) {
 async function fetchMemberCapacityReport(config, progress, params) {
   const baseApi = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_apis`;
   const adoBase = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_workitems/edit/`;
-  const sprintPath = (params && params.sprintPath) ? params.sprintPath : config.sprint;
+  const _curNum = resolveActiveSprintNum();
+  const sprintPath = (params && params.sprintPath)
+    ? params.sprintPath
+    : `${config.proj}\\IR\\Release ${_curNum}\\IR_R${_curNum}_Sprint ${_curNum}.1`;
 
   progress('Fetching sprint capacity…');
   const [capData, wiqlResult] = await Promise.all([
-    fetchCapacity({ ...config, sprint: sprintPath }),
+    fetchCapacity({ ...config, sprint: sprintPath }, null, { activityMap: IR_ACTIVITY_TO_TEAM }),
     adoFetch(config, `${baseApi}/wit/wiql?api-version=7.1`, {
       query: `SELECT [System.Id] FROM WorkItems WHERE [System.WorkItemType] IN ('Task','Bug') AND [System.IterationPath] = '${sprintPath}'`,
     }),
   ]);
   if (capData) progress(`Capacity loaded · ${capData.sprintRemainingDays} days remaining`);
 
+  // Team roster derived from this sprint's capacity board (auto-updates each sprint)
+  const { resourceTeams: _dynTeams, match: _match } = buildIRRoster(capData);
+
   const ids = (wiqlResult.workItems || []).map(w => w.id);
   progress(`${ids.length} work items found · Fetching fields…`);
-  if (!ids.length) return { members: [], teams: RESOURCE_TEAMS, capData };
+  if (!ids.length) return { members: [], teams: _dynTeams, capData };
 
   const fields = [
     'System.Id', 'System.Title', 'System.WorkItemType', 'System.State',
@@ -2241,7 +2341,7 @@ async function fetchMemberCapacityReport(config, progress, params) {
 
   // Initialise per-member accumulators from canonical team roster
   const memberData = {};
-  for (const [team, mems] of Object.entries(RESOURCE_TEAMS)) {
+  for (const [team, mems] of Object.entries(_dynTeams)) {
     for (const name of mems) {
       const cap = capData?.memberCapacity?.[name] || {};
       memberData[name] = {
@@ -2268,7 +2368,7 @@ async function fetchMemberCapacityReport(config, progress, params) {
     const url   = `${adoBase}${id}`;
 
     if (type === 'Task') {
-      const m = matchMember(cleanName(fld(raw, 'System.AssignedTo')));
+      const m = _match(cleanName(fld(raw, 'System.AssignedTo')));
       if (!m || !memberData[m.canonical]) continue;
       const remH  = Number(fld(raw, 'Microsoft.VSTS.Scheduling.RemainingWork')) || 0;
       const compH = Number(fld(raw, 'Microsoft.VSTS.Scheduling.CompletedWork'))  || 0;
@@ -2294,9 +2394,9 @@ async function fetchMemberCapacityReport(config, progress, params) {
       // DEV contributors: FixedByDev1/2/3, fall back to AssignedTo for DEV-team members
       let devMatches = [BUG_F.fixedDev1, BUG_F.fixedDev2, BUG_F.fixedDev3]
         .map(f => cleanName(fld(raw, f))).filter(Boolean)
-        .map(n => matchMember(n)).filter(m => m && memberData[m.canonical] && DEV_TEAMS.has(m.team));
+        .map(n => _match(n)).filter(m => m && memberData[m.canonical] && DEV_TEAMS.has(m.team));
       if (!devMatches.length) {
-        const asgn = matchMember(cleanName(fld(raw, 'System.AssignedTo')));
+        const asgn = _match(cleanName(fld(raw, 'System.AssignedTo')));
         if (asgn && memberData[asgn.canonical] && DEV_TEAMS.has(asgn.team)) devMatches = [asgn];
       }
       const devDiv = devMatches.length || 1;
@@ -2309,9 +2409,9 @@ async function fetchMemberCapacityReport(config, progress, params) {
       }
 
       // QA contributor: VerifiedByQA, fall back to AssignedTo for QA-team members
-      let qm = matchMember(cleanName(fld(raw, BUG_F.verifiedQA)));
+      let qm = _match(cleanName(fld(raw, BUG_F.verifiedQA)));
       if (!qm || !memberData[qm.canonical] || !QA_TEAMS.has(qm.team)) {
-        const asgn = matchMember(cleanName(fld(raw, 'System.AssignedTo')));
+        const asgn = _match(cleanName(fld(raw, 'System.AssignedTo')));
         if (asgn && memberData[asgn.canonical] && QA_TEAMS.has(asgn.team)) qm = asgn;
         else qm = null;
       }
@@ -2337,14 +2437,14 @@ async function fetchMemberCapacityReport(config, progress, params) {
 
   // Ordered flat list following canonical team roster
   const members = [];
-  for (const [, mems] of Object.entries(RESOURCE_TEAMS)) {
+  for (const [, mems] of Object.entries(_dynTeams)) {
     for (const name of mems) {
       if (memberData[name]) members.push(memberData[name]);
     }
   }
 
   progress('Resource Effort Report ready.');
-  return { members, teams: RESOURCE_TEAMS, capData };
+  return { members, teams: _dynTeams, capData };
 }
 
 async function fetchSprintList(config) {
@@ -2383,7 +2483,10 @@ async function fetchUpcomingSprintData(config, progress) {
   const sprintLabel = `${sprintNum}.1`;
 
   progress(`Fetching capacity for Sprint ${sprintLabel}…`);
-  const capData = await fetchCapacity({ ...config, sprint: sprintPath });
+  const capData = await fetchCapacity({ ...config, sprint: sprintPath }, null, { activityMap: IR_ACTIVITY_TO_TEAM });
+
+  // Team roster derived from the upcoming sprint's capacity board (auto-updates each sprint)
+  const { resourceTeams: _dynTeams, match: _match } = buildIRRoster(capData);
 
   const baseApi = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_apis`;
 
@@ -2499,7 +2602,7 @@ async function fetchUpcomingSprintData(config, progress) {
 
   // Build per-member capacity entries
   const members = [];
-  for (const [team, teamMems] of Object.entries(RESOURCE_TEAMS)) {
+  for (const [team, teamMems] of Object.entries(_dynTeams)) {
     for (const name of teamMems) {
       const cap = capData?.memberCapacity?.[name];
       // Skip members not on the capacity board or with zero capacity set
@@ -2527,7 +2630,7 @@ async function fetchUpcomingSprintData(config, progress) {
     const wState = fld(raw, 'System.State') || '';
     const wUrl   = `${wiBaseUrl}${wId}`;
     if (type === 'Task') {
-      const m = matchMember(cleanName(fld(raw, 'System.AssignedTo')));
+      const m = _match(cleanName(fld(raw, 'System.AssignedTo')));
       if (!m) continue;
       const mem = members.find(x => x.name === m.canonical);
       if (mem) {
@@ -2540,9 +2643,9 @@ async function fetchUpcomingSprintData(config, progress) {
       const qaRem  = Number(fld(raw, BUG_F.qaRem))  || 0;
       let devMatches = [BUG_F.fixedDev1, BUG_F.fixedDev2, BUG_F.fixedDev3]
         .map(f => cleanName(fld(raw, f))).filter(Boolean)
-        .map(n => matchMember(n)).filter(m => m && DEV_TEAMS.has(m.team));
+        .map(n => _match(n)).filter(m => m && DEV_TEAMS.has(m.team));
       if (!devMatches.length) {
-        const asgn = matchMember(cleanName(fld(raw, 'System.AssignedTo')));
+        const asgn = _match(cleanName(fld(raw, 'System.AssignedTo')));
         if (asgn && DEV_TEAMS.has(asgn.team)) devMatches = [asgn];
       }
       const devDiv = devMatches.length || 1;
@@ -2554,9 +2657,9 @@ async function fetchUpcomingSprintData(config, progress) {
           mem.items.push({ id: wId, url: wUrl, type: 'Bug', role: 'Bug-DEV', title: wTitle, state: wState, remH: share });
         }
       }
-      let qm = matchMember(cleanName(fld(raw, BUG_F.verifiedQA)));
+      let qm = _match(cleanName(fld(raw, BUG_F.verifiedQA)));
       if (!qm || !QA_TEAMS.has(qm.team)) {
-        const asgn = matchMember(cleanName(fld(raw, 'System.AssignedTo')));
+        const asgn = _match(cleanName(fld(raw, 'System.AssignedTo')));
         qm = (asgn && QA_TEAMS.has(asgn.team)) ? asgn : null;
       }
       if (qm) {
@@ -2577,8 +2680,8 @@ async function fetchUpcomingSprintData(config, progress) {
     m.gap = +(m.totalCapacityHrs - m.allocatedTotalH).toFixed(1);
   }
 
-  // Build team rollups preserving RESOURCE_TEAMS order
-  const teamOrder = Object.keys(RESOURCE_TEAMS);
+  // Build team rollups preserving _dynTeams order
+  const teamOrder = Object.keys(_dynTeams);
   const teams = teamOrder.map(teamName => {
     const teamMems = members.filter(m => m.team === teamName);
     const totalCapacity  = +teamMems.reduce((s, m) => s + m.totalCapacityHrs, 0).toFixed(1);
