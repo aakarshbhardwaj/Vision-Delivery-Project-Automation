@@ -718,7 +718,11 @@ async function fetchThreeWayData(config, progress) {
 async function fetchChildBugsData(config, progress) {
   const baseApi = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_apis`;
   const adoBase = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_workitems/edit/`;
-  const QUERY_ID = '61f5672b-53ea-41f8-9d01-9b02e7e507e6';
+  // Shared Queries / IR Delivery Internal Reports / Weekly Alignment Call /
+  // "Weekly Status Call- US Related Bugs" — a shared, links-type query the
+  // dashboard PAT can read. (Replaces the old 61f5672b query, which was moved
+  // to a personal folder and became inaccessible to the service PAT.)
+  const QUERY_ID = 'da28163f-cdb4-4ac9-8f8b-f10b5de7cb9a';
 
   const emptyResult = { bugs: [], bugTypes: [], weekLabels: [], sprintByType: {}, weekByType: {}, parentMap: {}, totals: { total: 0, byBugType: {} } };
 
