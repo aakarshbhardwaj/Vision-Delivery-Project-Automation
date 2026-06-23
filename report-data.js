@@ -166,11 +166,11 @@ async function fetchOnHoldData(config, progress) {
 // ── Resource Hours Data ──────────────────────────────────────────────────────
 
 const RESOURCE_TEAMS = {
-  'DEV-Cloud':       ['Chandra Shekhar', 'Pradeep Kumar', 'Shailendra Pal', 'Ravi Goswami', 'P Aftab Hussain', 'Saksham Solanki', 'Piyush Dass', 'Rajveer', 'Vinoth S', 'Deepanshu Jain', 'Srinivasan GR'],
+  'DEV-Cloud':       ['Chandra Shekhar', 'Pradeep Kumar', 'Shailendra Pal', 'Ravi Goswami', 'P Aftab Hussain', 'Saksham Solanki', 'Piyush Dass', 'Rajveer Singh', 'Vinoth S', 'Deepanshu Jain', 'Srinivasan GR', 'Sandeep Kumar'],
   'DEV-UI':          ['Prashant Chaudhary', 'Sujit Kumar', 'Avdhesh Kumar', 'Primal Viola Miranda', 'Dinesh Rai', 'Akshat Agarwal', 'Karmjeet Singh', 'Pawan Prasad P', 'Santosh Kumar'],
   'DEV-MOB':         ['Ashwani Kumar', 'Prince Sindhu', 'Rinkesh Patel', 'Shivani Patel', 'Krunal Shah', 'Nikita Malik'],
   'Testing Mobile':  ['Anoop Maurya', 'Rahul Singh'],
-  'Testing QA':      ['Anshumaan Singh', 'Deepankshi Arora', 'Sachin Pathak', 'Priyanka Bhagwan', 'Shubham Mishra', 'Sachin Doiphode', 'Surya kant Chaturvedi', 'Prashant Sharma'],
+  'Testing QA':      ['Anshumaan Singh', 'Deepankshi Arora', 'Sachin Pathak', 'Priyanka Bhagwan', 'Shubham Mishra', 'Sachin Doiphode', 'Surya kant Chaturvedi', 'Prashant Sharma', 'Harshit Singh'],
   'NEW-IR':          ['Raju Sarmah', 'Shubham Bharoja', 'Manohar Mandal', 'Rahul Gupta'],
 };
 
