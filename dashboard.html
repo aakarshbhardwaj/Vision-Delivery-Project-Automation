@@ -2281,7 +2281,7 @@ function renderChildBugs({ bugs, bugTypes, weekLabels, sprintByType, weekByType,
           <tr style="border-bottom:1px solid var(--border)">
             <th style="text-align:left;padding:8px 14px;color:var(--muted);position:sticky;left:0;background:var(--surface);z-index:2;min-width:160px">Bug Type</th>
             ${weekLabels.map((wl, wi) => `<th onclick="cbWkDrill(-1,${wi})" style="text-align:center;padding:7px 10px;color:#4f8ef7;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;min-width:110px" onmouseover="this.style.opacity='.7'" onmouseout="this.style.opacity='1'">${rvEsc(wl)}</th>`).join('')}
-            <th style="text-align:right;padding:8px 14px;color:var(--muted);border-left:1px solid var(--border)">Total</th>
+            <th onclick="cbWkDrill(-1,-1)" style="text-align:right;padding:8px 14px;color:#4f8ef7;font-size:10px;font-weight:700;cursor:pointer;border-left:1px solid var(--border)" onmouseover="this.style.opacity='.7'" onmouseout="this.style.opacity='1'">Total</th>
           </tr>
         </thead>
         <tbody>
@@ -2295,20 +2295,20 @@ function renderChildBugs({ bugs, bugTypes, weekLabels, sprintByType, weekByType,
                 if (!v) return `<td style="padding:6px 8px;text-align:center;color:var(--border)">—</td>`;
                 return `<td onclick="cbWkDrill(${bi},${wi})" style="padding:6px 8px;text-align:center;cursor:pointer;border-radius:3px;font-size:12px;font-weight:600;${wkHeat(v,c)}" title="${rvEsc(wl)} · ${rvEsc(bt)}: ${v}">${v}</td>`;
               }).join('')}
-              <td style="padding:6px 14px;text-align:right;font-weight:700;color:var(--text);border-left:1px solid var(--border)">${rowTotal}</td>
+              <td onclick="cbWkDrill(${bi},-1)" style="padding:6px 14px;text-align:right;font-weight:700;color:var(--text);cursor:pointer;border-left:1px solid var(--border)" onmouseover="this.style.color='${c}'" onmouseout="this.style.color='var(--text)'">${rowTotal}</td>
             </tr>`;
           }).join('')}
         </tbody>
         <tfoot>
           <tr style="border-top:1px solid var(--border)">
-            <td style="padding:7px 14px;font-weight:700;color:var(--muted);position:sticky;left:0;background:var(--surface);z-index:1;border-right:1px solid var(--border)">Total</td>
-            ${weekLabels.map(wl => `<td style="padding:7px 8px;text-align:center;font-weight:700;color:var(--text)">${wkColTotals[wl]||0}</td>`).join('')}
-            <td style="padding:7px 14px;text-align:right;font-size:13px;font-weight:700;color:var(--text);border-left:1px solid var(--border)">${wkGrand}</td>
+            <td onclick="cbWkDrill(-1,-1)" style="padding:7px 14px;font-weight:700;color:var(--muted);cursor:pointer;position:sticky;left:0;background:var(--surface);z-index:1;border-right:1px solid var(--border)" onmouseover="this.style.color='#4f8ef7'" onmouseout="this.style.color='var(--muted)'">Total</td>
+            ${weekLabels.map((wl, wi) => `<td onclick="cbWkDrill(-1,${wi})" style="padding:7px 8px;text-align:center;font-weight:700;color:var(--text);cursor:pointer" onmouseover="this.style.opacity='.6'" onmouseout="this.style.opacity='1'">${wkColTotals[wl]||0}</td>`).join('')}
+            <td onclick="cbWkDrill(-1,-1)" style="padding:7px 14px;text-align:right;font-size:13px;font-weight:700;color:var(--text);cursor:pointer;border-left:1px solid var(--border)" onmouseover="this.style.opacity='.6'" onmouseout="this.style.opacity='1'">${wkGrand}</td>
           </tr>
         </tfoot>
       </table>
     </div>
-    <div style="padding:6px 16px 10px;font-size:10px;color:var(--muted)">· Click a Bug Type label or week column header to see all bugs in that dimension &nbsp;·&nbsp; Click a cell to see bugs matching both</div>
+    <div style="padding:6px 16px 10px;font-size:10px;color:var(--muted)">· Click a Bug Type label or week column header to see all bugs in that dimension &nbsp;·&nbsp; Click a cell to see bugs matching both &nbsp;·&nbsp; Click any Total (row, column, or grand total) to drill down too</div>
   </div>`;
 
   // ── Section 3: Bug Fixes by Developer — ranked high to low ──
