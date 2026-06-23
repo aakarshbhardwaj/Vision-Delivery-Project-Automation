@@ -227,8 +227,9 @@ function countWorkdays(from, to, offRanges) {
 }
 
 // Fetch team capacity from ADO Team Capacity API (sprint-agnostic via config.sprint)
-async function fetchCapacity(config) {
+async function fetchCapacity(config, matchFn) {
   if (!config.team) return null;
+  const _matchFn = matchFn || matchMember;
   try {
     const tBase = `${config.org.replace(/\/$/,'')}/${encodeURIComponent(config.proj)}/${encodeURIComponent(config.team)}/_apis`;
     const iters = await adoFetch(config, `${tBase}/work/teamsettings/iterations?api-version=7.1`);
@@ -259,7 +260,7 @@ async function fetchCapacity(config) {
     const memberCapacity = {};
     for (const cap of members) {
       const nm = cap.teamMember?.displayName || '';
-      const m  = matchMember(nm);
+      const m  = _matchFn(nm);
       if (!m) continue;
       const cpd = (cap.activities || []).reduce((a, act) => a + (act.capacityPerDay || 0), 0);
 
@@ -1219,11 +1220,14 @@ async function fetchDailyActivityData(config, progress, params) {
 
   const baseApi = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_apis`;
   const adoBase = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_workitems/edit/`;
-  const sprintPath = config.sprint;
+
+  const _sprintNum = resolveActiveSprintNum();
+  const sprintPath = `${config.proj}\\IR\\Release ${_sprintNum}\\IR_R${_sprintNum}_Sprint ${_sprintNum}.1`;
+  const irConfig   = { ...config, sprint: sprintPath };
 
   // ── Sprint capacity ───────────────────────────────────────────────────
   progress('Loading sprint capacity…');
-  const capData = await fetchCapacity(config);
+  const capData = await fetchCapacity(irConfig);
   const sprintStart = capData?.sprintStart ? _fmt(new Date(capData.sprintStart)) : null;
   const sprintEnd   = capData?.sprintEnd   ? _fmt(new Date(capData.sprintEnd))   : null;
 
@@ -1573,7 +1577,7 @@ async function fetchIoTDailyActivityData(config, progress, params) {
   const iotConfig = { ...config, team: IOT_TEAM_NAME, sprint: iotSprintPath };
 
   progress('Loading IoT sprint capacity…');
-  const capData = await fetchCapacity(iotConfig);
+  const capData = await fetchCapacity(iotConfig, matchIoTMember);
   const sprintStart = capData?.sprintStart ? _fmt(new Date(capData.sprintStart)) : null;
   const sprintEnd   = capData?.sprintEnd   ? _fmt(new Date(capData.sprintEnd))   : null;
 
