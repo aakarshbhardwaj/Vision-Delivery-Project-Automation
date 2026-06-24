@@ -5506,7 +5506,7 @@ function renderSupportTickets({ tickets, totals, queryName }) {
 
   const body = document.getElementById('rv-body');
   window._stTickets = tickets;
-  window._stSel = { state: new Set(), priority: new Set(), assignee: new Set() };
+  window._stSel = { state: new Set(), priority: new Set(), assignee: new Set(), fixeddev: new Set() };
 
   const STATE_COL = {
     'Active':'#4f8ef7','New':'#20c997','Resolved':'#cc5de8','Closed':'#7a8399',
@@ -5525,12 +5525,13 @@ function renderSupportTickets({ tickets, totals, queryName }) {
   const allStates     = Object.keys(totals.byState).sort();
   const allAssignees  = Object.keys(totals.byAssignee).sort();
   const allPriorities = [...new Set(tickets.map(t => String(t.priority||'')).filter(Boolean))].sort();
+  const allFixedDevs  = [...new Set(tickets.map(t => t.fixedByDev1).filter(Boolean))].sort();
 
   // mkMsPanel: labelFn is optional — maps raw value to display string inside the panel
   const mkMsPanel = (id, opts, colorFn, labelPlural, labelFn) => `
     <div class="st-ms-wrap" id="ms-${id}-wrap">
       <button class="st-ms-btn" id="ms-${id}-btn" onclick="stMsToggle('${id}',event)">
-        <span id="ms-${id}-lbl">All ${labelPlural}</span>
+        <span id="ms-${id}-lbl">${labelPlural}</span>
         <span style="font-size:9px;opacity:.5;margin-left:auto;padding-left:4px">▾</span>
       </button>
       <div class="st-ms-panel" id="ms-${id}-panel">
@@ -5586,19 +5587,24 @@ function renderSupportTickets({ tickets, totals, queryName }) {
       ${mkMsPanel('state',    allStates,     stateCol,      'States',     null)}
       ${mkMsPanel('priority', allPriorities, p => priCol(p), 'Priorities', null)}
       ${mkMsPanel('assignee', allAssignees,  null,          'Assignees',  null)}
+      ${mkMsPanel('fixeddev', allFixedDevs,  null,          'Fixed by DEV1', null)}
       <span id="st-count" style="font-size:11px;color:var(--muted);margin-left:auto">${tickets.length} of ${tickets.length} items</span>
     </div>
     <div style="overflow-x:auto">
-      <table style="border-collapse:collapse;width:100%;font-size:12px">
+      <table style="border-collapse:collapse;width:100%;font-size:10.5px;table-layout:fixed">
         <thead>
           <tr style="border-bottom:2px solid var(--border);position:sticky;top:0;z-index:3;background:var(--surface)">
-            <th style="padding:8px 12px;color:var(--muted);text-align:left;white-space:nowrap;min-width:60px">ID</th>
-            <th style="padding:8px 12px;color:var(--muted);text-align:left;white-space:nowrap">Work Item Type</th>
-            <th style="padding:8px 12px;color:var(--muted);text-align:left">Title</th>
-            <th style="padding:8px 12px;color:var(--muted);text-align:left;white-space:nowrap">PriorityType</th>
-            <th style="padding:8px 12px;color:var(--muted);text-align:left;white-space:nowrap">Severity</th>
-            <th style="padding:8px 12px;color:var(--muted);text-align:center;white-space:nowrap">State</th>
-            <th style="padding:8px 12px;color:var(--muted);text-align:left;white-space:nowrap">Environment</th>
+            <th style="padding:5px 6px;color:var(--muted);text-align:left;white-space:nowrap;width:5%">ID</th>
+            <th style="padding:5px 6px;color:var(--muted);text-align:left;white-space:nowrap;width:8%">Type</th>
+            <th style="padding:5px 6px;color:var(--muted);text-align:left;width:21%">Title</th>
+            <th style="padding:5px 6px;color:var(--muted);text-align:left;white-space:nowrap;width:7%">Priority</th>
+            <th style="padding:5px 6px;color:var(--muted);text-align:left;white-space:nowrap;width:9%">Severity</th>
+            <th style="padding:5px 6px;color:var(--muted);text-align:center;white-space:nowrap;width:8%">State</th>
+            <th style="padding:5px 6px;color:var(--muted);text-align:left;white-space:nowrap;width:11%">Environment</th>
+            <th style="padding:5px 6px;color:var(--muted);text-align:left;white-space:nowrap;width:11%">Fixed by DEV1</th>
+            <th style="padding:5px 6px;color:var(--muted);text-align:left;white-space:nowrap;width:11%">Verified by QA</th>
+            <th style="padding:5px 6px;color:var(--muted);text-align:right;white-space:nowrap;width:4.5%">DEV (h)</th>
+            <th style="padding:5px 6px;color:var(--muted);text-align:right;white-space:nowrap;width:4.5%">QA (h)</th>
           </tr>
         </thead>
         <tbody id="st-tbody">
@@ -5607,18 +5613,30 @@ function renderSupportTickets({ tickets, totals, queryName }) {
             data-txt="${rvEsc((t.id+' '+t.title+' '+t.assignedTo).toLowerCase())}"
             data-state="${rvEsc(t.state)}" data-type="${rvEsc(t.type)}"
             data-priority="${rvEsc(String(t.priority||''))}" data-assignee="${rvEsc(t.assignedTo)}"
-            style="border-bottom:1px solid #1c2336;cursor:pointer"
+            data-fixeddev="${rvEsc(t.fixedByDev1)}"
+            style="border-bottom:1px solid var(--border);cursor:pointer"
             onclick="window.open('${t.url}','_blank')"
-            onmouseover="this.style.background='#1e2840'" onmouseout="this.style.background=''">
-            <td style="padding:7px 12px"><a href="${t.url}" target="_blank" class="id-link" onclick="event.stopPropagation()">#${t.id}</a></td>
-            <td style="padding:7px 12px;text-align:left"><span style="font-size:10px;padding:2px 7px;border-radius:3px;background:${typeCol(t.type)}22;color:${typeCol(t.type)};border:1px solid ${typeCol(t.type)}44;white-space:nowrap">${rvEsc(t.type)}</span></td>
-            <td style="padding:7px 12px;color:var(--text);max-width:380px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${rvEsc(t.title)}">${rvEsc(t.title)}</td>
-            <td style="padding:7px 12px;font-size:12px;color:${priCol(t.priority)};white-space:nowrap;font-weight:600">${rvEsc(t.priority)||'—'}</td>
-            <td style="padding:7px 12px;font-size:12px;color:var(--text);white-space:nowrap">${rvEsc(t.severity)||'—'}</td>
-            <td style="padding:7px 12px;text-align:center"><span style="font-size:10px;padding:2px 7px;border-radius:3px;background:${stateCol(t.state)}22;color:${stateCol(t.state)};border:1px solid ${stateCol(t.state)}44;white-space:nowrap">${rvEsc(t.state)}</span></td>
-            <td style="padding:7px 12px;font-size:11px;color:var(--muted);white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis" title="${rvEsc(t.environment)}">${rvEsc(t.environment)||'—'}</td>
+            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+            <td style="padding:4px 6px"><a href="${t.url}" target="_blank" class="id-link" onclick="event.stopPropagation()">#${t.id}</a></td>
+            <td style="padding:4px 6px;text-align:left"><span style="font-size:9px;padding:1px 5px;border-radius:3px;background:${typeCol(t.type)}22;color:${typeCol(t.type)};border:1px solid ${typeCol(t.type)}44;white-space:nowrap">${rvEsc(t.type)}</span></td>
+            <td style="padding:4px 6px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${rvEsc(t.title)}">${rvEsc(t.title)}</td>
+            <td style="padding:4px 6px;color:${priCol(t.priority)};white-space:nowrap;font-weight:600;overflow:hidden;text-overflow:ellipsis">${rvEsc(t.priority)||'—'}</td>
+            <td style="padding:4px 6px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${rvEsc(t.severity)||'—'}</td>
+            <td style="padding:4px 6px;text-align:center"><span style="font-size:9px;padding:1px 5px;border-radius:3px;background:${stateCol(t.state)}22;color:${stateCol(t.state)};border:1px solid ${stateCol(t.state)}44;white-space:nowrap">${rvEsc(t.state)}</span></td>
+            <td style="padding:4px 6px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${rvEsc(t.environment)}">${rvEsc(t.environment)||'—'}</td>
+            <td style="padding:4px 6px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${rvEsc(t.fixedByDev1)}">${rvEsc(t.fixedByDev1)||'—'}</td>
+            <td style="padding:4px 6px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${rvEsc(t.verifiedByQA)}">${rvEsc(t.verifiedByQA)||'—'}</td>
+            <td style="padding:4px 6px;color:var(--text);text-align:right;white-space:nowrap">${t.devCompH ? t.devCompH : '—'}</td>
+            <td style="padding:4px 6px;color:var(--text);text-align:right;white-space:nowrap">${t.qaCompH ? t.qaCompH : '—'}</td>
           </tr>`).join('')}
         </tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border);background:var(--surface2);font-weight:700">
+            <td colspan="9" id="st-total-lbl" style="padding:6px 6px;text-align:right;color:var(--text)">Total</td>
+            <td id="st-total-dev" style="padding:6px 6px;text-align:right;color:#4f8ef7">${(totals.totalDevComp||0).toFixed(1)}</td>
+            <td id="st-total-qa" style="padding:6px 6px;text-align:right;color:#cc5de8">${(totals.totalQaComp||0).toFixed(1)}</td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </div>`;
@@ -5657,9 +5675,9 @@ window.stMsToggle = function(id, e) {
 window.stMsAll = function(id) {
   const allCb = document.getElementById(`ms-${id}-all`);
   if (!allCb) return;
-  const checked = allCb.checked;
+  // "All" is a real toggle: checked = no filter (show all); unchecked = nothing
+  // selected (show none) until the user ticks individual options.
   document.querySelectorAll(`.ms-${id}-cb`).forEach(cb => { cb.checked = false; });
-  if (!checked) allCb.checked = true; // can't deselect "All" — it always resets
   window._stSel[id] = new Set();
   stMsUpdateLabel(id);
   stApplyFilter();
@@ -5680,8 +5698,12 @@ window.stMsUpdateLabel = function(id) {
   const lbl = document.getElementById(`ms-${id}-lbl`);
   if (!lbl) return;
   const sel = window._stSel?.[id];
-  const LABELS = { state:'States', priority:'Priorities', assignee:'Assignees' };
-  if (!sel || sel.size === 0) { lbl.textContent = `All ${LABELS[id]||id}`; return; }
+  const allCb = document.getElementById(`ms-${id}-all`);
+  const LABELS = { state:'States', priority:'Priorities', assignee:'Assignees', fixeddev:'Fixed by DEV1' };
+  if (!sel || sel.size === 0) {
+    lbl.textContent = (allCb && !allCb.checked) ? `${LABELS[id]||id}: None` : `${LABELS[id]||id}`;
+    return;
+  }
   const display = id === 'priority'
     ? [...sel].sort().map(v => `P${v}`).join(', ')
     : sel.size === 1 ? [...sel][0] : `${sel.size} selected`;
@@ -5690,8 +5712,8 @@ window.stMsUpdateLabel = function(id) {
 
 window.stFilterStates = function(states) {
   if (!window._stSel) return;
-  window._stSel = { state: new Set(states), priority: new Set(), assignee: new Set() };
-  ['state','priority','assignee'].forEach(id => {
+  window._stSel = { state: new Set(states), priority: new Set(), assignee: new Set(), fixeddev: new Set() };
+  ['state','priority','assignee','fixeddev'].forEach(id => {
     document.querySelectorAll(`.ms-${id}-cb`).forEach(cb => {
       cb.checked = id === 'state' && states.includes(cb.value);
     });
@@ -5709,8 +5731,8 @@ window.stFilter = function(field, value) {
     stFilterStates([value]);
   } else {
     // Reset all
-    window._stSel = { state: new Set(), priority: new Set(), assignee: new Set() };
-    ['state','priority','assignee'].forEach(id => {
+    window._stSel = { state: new Set(), priority: new Set(), assignee: new Set(), fixeddev: new Set() };
+    ['state','priority','assignee','fixeddev'].forEach(id => {
       document.querySelectorAll(`.ms-${id}-cb`).forEach(cb => { cb.checked = false; });
       const allCb = document.getElementById(`ms-${id}-all`);
       if (allCb) allCb.checked = true;
@@ -5724,19 +5746,36 @@ window.stFilter = function(field, value) {
 
 window.stApplyFilter = function() {
   const q   = (document.getElementById('st-search')?.value || '').toLowerCase();
-  const sel = window._stSel || { state: new Set(), priority: new Set(), assignee: new Set() };
-  let visible = 0;
+  const sel = window._stSel || { state: new Set(), priority: new Set(), assignee: new Set(), fixeddev: new Set() };
+  const tickets = window._stTickets || [];
+  // A dimension is "active" (restricting) only when its "All" box is unchecked.
+  // Active + empty selection = show none; All checked = show everything.
+  const active = id => { const cb = document.getElementById(`ms-${id}-all`); return cb && !cb.checked; };
+  const pass = (id, val) => !active(id) || (sel[id] && sel[id].has(val));
+  let visible = 0, devTot = 0, qaTot = 0;
   document.querySelectorAll('#st-tbody tr.st-row').forEach(tr => {
     const d = tr.dataset;
-    const show = (!q                  || d.txt.includes(q))
-              && (sel.state.size    === 0 || sel.state.has(d.state))
-              && (sel.priority.size === 0 || sel.priority.has(d.priority))
-              && (sel.assignee.size === 0 || sel.assignee.has(d.assignee));
+    const show = (!q || d.txt.includes(q))
+              && pass('state',    d.state)
+              && pass('priority', d.priority)
+              && pass('assignee', d.assignee)
+              && pass('fixeddev', d.fixeddev);
     tr.style.display = show ? '' : 'none';
-    if (show) visible++;
+    if (show) {
+      visible++;
+      const t = tickets[+d.idx];
+      if (t) { devTot += t.devCompH || 0; qaTot += t.qaCompH || 0; }
+    }
   });
   const cnt = document.getElementById('st-count');
-  if (cnt) cnt.textContent = `${visible} of ${(window._stTickets||[]).length} items`;
+  if (cnt) cnt.textContent = `${visible} of ${tickets.length} items`;
+  // Recompute the Total row from the currently visible rows
+  const devEl = document.getElementById('st-total-dev');
+  const qaEl  = document.getElementById('st-total-qa');
+  const lblEl = document.getElementById('st-total-lbl');
+  if (devEl) devEl.textContent = devTot.toFixed(1);
+  if (qaEl)  qaEl.textContent  = qaTot.toFixed(1);
+  if (lblEl) lblEl.textContent = (visible === tickets.length) ? 'Total' : `Total (filtered · ${visible})`;
 };
 
 // ── Upcoming Sprint Planning ──────────────────────────────────────────────────
