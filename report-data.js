@@ -2518,13 +2518,17 @@ async function fetchUpcomingSprintData(config, progress, params) {
     }
   } catch (_) {}
 
-  // Fetch User Stories via saved ADO query (user manages the iteration filter in ADO)
-  const US_QUERY_ID = 'b395b238-9495-4772-a902-460b7e6c8f72';
+  // Fetch User Stories for the SELECTED sprint (Ongoing/Upcoming) via a dynamic WIQL,
+  // so the card follows the sprint selector and auto-advances on each transition.
+  // (Mirrors the old "Planned Sprint Health Check" saved query's filters, but the
+  //  iteration is the live sprintPath instead of a hardcoded one.)
   const usBaseUrl   = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_workitems/edit/`;
-  progress('Fetching User Stories from saved query…');
+  progress(`Fetching User Stories for Sprint ${sprintLabel}…`);
   let userStories = [];
   try {
-    const usWiql = await adoFetch(config, `${baseApi}/wit/wiql/${US_QUERY_ID}?api-version=7.1`);
+    const usWiql = await adoFetch(config, `${baseApi}/wit/wiql?api-version=7.1`, {
+      query: `SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = @project AND [System.WorkItemType] = 'User Story' AND [System.IterationPath] = '${sprintPath}' AND [System.State] <> '' ORDER BY [System.Id]`,
+    });
     const usIds = (usWiql.workItems || usWiql.workItemRelations || [])
       .map(w => w.target ? w.target.id : w.id).filter(Boolean);
     if (usIds.length) {
