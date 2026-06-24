@@ -311,6 +311,7 @@ const server = http.createServer(async (req, res) => {
       // Include date/sprintPath in cache keys so each selection is cached independently
       const date       = url.searchParams.get('date')       || '';
       const sprintPath = url.searchParams.get('sprintPath') || '';
+      const mode       = url.searchParams.get('mode')       || '';
       // date-stamped keys for reports that transition per sprint or per day
       const todayStr = new Date().toISOString().slice(0, 10);
       const cacheKey = (report === 'daily-activity' && date)
@@ -319,6 +320,8 @@ const server = http.createServer(async (req, res) => {
         ? `iot-daily-activity_${date}`
         : (report === 'resource-effort' && sprintPath)
         ? `resource-effort_${sprintPath}`
+        : report === 'upcoming-sprint'
+        ? `upcoming-sprint_${mode || 'upcoming'}_${todayStr}`
         : report === 'onhold'
         ? `onhold_${todayStr}`
         : report;
@@ -332,7 +335,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       const progress = msg => send({ type: 'progress', msg });
-      const params   = { date, sprintPath };
+      const params   = { date, sprintPath, mode };
       try {
         const payload = await fetchers[report](config, progress, params);
         reportCache[cacheKey] = { ts: Date.now(), payload };

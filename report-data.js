@@ -2475,14 +2475,18 @@ async function fetchSprintList(config) {
 }
 
 // ── Upcoming Sprint Planning ──────────────────────────────────────────────────
-async function fetchUpcomingSprintData(config, progress) {
-  // Determine upcoming sprint dynamically from IR calendar
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const started = SPRINT_SCHEDULE_3W.filter(s => new Date(s.start + 'T00:00:00') <= today);
-  const curSprint = started.length ? started[started.length - 1] : SPRINT_SCHEDULE_3W[0];
-  const curIdx = SPRINT_SCHEDULE_3W.indexOf(curSprint);
-  const nextSprint = SPRINT_SCHEDULE_3W[Math.min(curIdx + 1, SPRINT_SCHEDULE_3W.length - 1)];
-  const sprintNum = nextSprint.num;
+async function fetchUpcomingSprintData(config, progress, params) {
+  // Sprint selection: 'ongoing' (current active) or 'upcoming' (next). Both resolve
+  // dynamically from the IR calendar, so they auto-advance on each sprint transition.
+  const mode = (params && params.mode === 'ongoing') ? 'ongoing' : 'upcoming';
+  const ongoingNum = resolveActiveSprintNum();
+  const ongoingIdx = SPRINT_SCHEDULE_3W.findIndex(s => s.num === ongoingNum);
+  const upcomingEntry = SPRINT_SCHEDULE_3W[Math.min((ongoingIdx < 0 ? 0 : ongoingIdx) + 1, SPRINT_SCHEDULE_3W.length - 1)];
+  const upcomingNum = upcomingEntry.num;
+  const ongoingLabel = `${ongoingNum}.1`, upcomingLabel = `${upcomingNum}.1`;
+
+  const sprintNum = mode === 'ongoing' ? ongoingNum : upcomingNum;
+  const selEntry = SPRINT_SCHEDULE_3W.find(s => s.num === sprintNum) || upcomingEntry;
   const sprintPath = `${config.proj}\\IR\\Release ${sprintNum}\\IR_R${sprintNum}_Sprint ${sprintNum}.1`;
   const sprintLabel = `${sprintNum}.1`;
 
@@ -2600,7 +2604,7 @@ async function fetchUpcomingSprintData(config, progress) {
   } catch (e) { console.error('Client remaining hours fetch error:', e.message); }
 
   // Sprint metadata
-  const sprintStart = capData?.sprintStart || new Date(nextSprint.start + 'T00:00:00');
+  const sprintStart = capData?.sprintStart || new Date(selEntry.start + 'T00:00:00');
   const sprintEnd   = capData?.sprintEnd   || null;
   const totalSprintWorkdays = (sprintStart && sprintEnd) ? countWorkdays(sprintStart, sprintEnd, []) : 0;
 
@@ -2698,9 +2702,12 @@ async function fetchUpcomingSprintData(config, progress) {
 
   progress('Sprint planning data ready.');
   return {
+    mode,
+    ongoingLabel,
+    upcomingLabel,
     sprintLabel,
     sprintPath,
-    sprintStart: sprintStart instanceof Date ? sprintStart.toISOString().slice(0, 10) : (sprintStart || nextSprint.start),
+    sprintStart: sprintStart instanceof Date ? sprintStart.toISOString().slice(0, 10) : (sprintStart || selEntry.start),
     sprintEnd:   sprintEnd   instanceof Date ? sprintEnd.toISOString().slice(0, 10)   : (sprintEnd   || null),
     totalSprintWorkdays,
     members,

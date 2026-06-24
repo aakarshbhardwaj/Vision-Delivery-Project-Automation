@@ -1157,6 +1157,18 @@ tr:last-child td { border-bottom: none; }
                    cursor:pointer;outline:none;font-weight:700;min-width:160px">
           </select>
         </div>
+        <!-- Sprint selector — only shown for Upcoming Sprint Planning -->
+        <div id="usp-sprint-ctrl" style="display:none;align-items:center;gap:6px;margin-left:14px">
+          <span style="font-size:12px">🗓️</span>
+          <span style="font-size:11px;color:var(--muted);font-weight:600">Sprint:</span>
+          <select id="usp-sprint-sel" onchange="applyUspMode()"
+            style="background:var(--surface2);border:1px solid var(--border);color:var(--accent);
+                   font-size:11px;font-family:inherit;border-radius:5px;padding:4px 10px;
+                   cursor:pointer;outline:none;font-weight:700;min-width:160px">
+            <option value="upcoming">Upcoming</option>
+            <option value="ongoing">Ongoing</option>
+          </select>
+        </div>
         <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
           <span id="rv-ts" style="font-size:11px;color:var(--muted)"></span>
           <button class="q-refresh" id="rv-refresh" onclick="refreshReport()">&#8635; Refresh</button>
@@ -1860,6 +1872,16 @@ function selectReport(el) {
     reCtrl.style.display = 'none';
   }
 
+  // Show/hide Ongoing/Upcoming selector for upcoming-sprint planning
+  const uspCtrl = document.getElementById('usp-sprint-ctrl');
+  if (key === 'upcoming-sprint') {
+    uspCtrl.style.display = 'flex';
+    if (!window._uspMode) window._uspMode = 'upcoming';
+    document.getElementById('usp-sprint-sel').value = window._uspMode;
+  } else {
+    uspCtrl.style.display = 'none';
+  }
+
   streamReportData(key);
 }
 
@@ -1872,8 +1894,15 @@ function refreshReport() {
     cacheKey = `iot-daily-activity_${window._daDate}`;
   else if (activeReport === 'resource-effort' && window._reSprint)
     cacheKey = `resource-effort_${window._reSprint}`;
+  else if (activeReport === 'upcoming-sprint')
+    cacheKey = `upcoming-sprint_${window._uspMode || 'upcoming'}_${new Date().toISOString().slice(0,10)}`;
   fetch(`/api/report-cache-clear?report=${encodeURIComponent(cacheKey)}`)
     .then(() => streamReportData(activeReport));
+}
+
+function applyUspMode() {
+  window._uspMode = document.getElementById('usp-sprint-sel').value;
+  if (activeReport === 'upcoming-sprint') streamReportData('upcoming-sprint');
 }
 
 function applyDaDate() {
@@ -1956,6 +1985,8 @@ function streamReportData(key) {
     ? `/api/report-data?report=${key}&date=${window._daDate}`
     : (key === 'resource-effort' && window._reSprint)
     ? `/api/report-data?report=${key}&sprintPath=${encodeURIComponent(window._reSprint)}`
+    : (key === 'upcoming-sprint')
+    ? `/api/report-data?report=${key}&mode=${window._uspMode || 'upcoming'}`
     : `/api/report-data?report=${key}`;
   const es = new EventSource(esUrl);
   activeEvtSrc = es;
@@ -5709,9 +5740,18 @@ window.stApplyFilter = function() {
 };
 
 // ── Upcoming Sprint Planning ──────────────────────────────────────────────────
-function renderUpcomingSprintPlanning({ sprintLabel, sprintStart, sprintEnd, totalSprintWorkdays, members, teams, totals, userStories, clientSprintHours }) {
+function renderUpcomingSprintPlanning({ mode, ongoingLabel, upcomingLabel, sprintLabel, sprintStart, sprintEnd, totalSprintWorkdays, members, teams, totals, userStories, clientSprintHours }) {
   const body = document.getElementById('rv-body');
   if (!body) return;
+
+  // Label the Ongoing/Upcoming dropdown with the live sprint numbers
+  const uspSel = document.getElementById('usp-sprint-sel');
+  if (uspSel && ongoingLabel && upcomingLabel) {
+    uspSel.options[0].text = `Upcoming · ${upcomingLabel}`;
+    uspSel.options[1].text = `Ongoing · ${ongoingLabel}`;
+    uspSel.value = mode || 'upcoming';
+  }
+  const isOngoing = mode === 'ongoing';
 
   const fmt    = v => (v||0) % 1 === 0 ? (v||0).toString() : (+(v||0)).toFixed(1);
   const fmtH   = v => fmt(v) + 'h';
@@ -5742,7 +5782,7 @@ function renderUpcomingSprintPlanning({ sprintLabel, sprintStart, sprintEnd, tot
   const kpiStrip = `
   <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px">
     ${[
-      { val: `Sprint ${sprintLabel}`,       lbl: 'Upcoming Sprint',     col: '#4f8ef7' },
+      { val: `Sprint ${sprintLabel}`,       lbl: isOngoing ? 'Ongoing Sprint' : 'Upcoming Sprint', col: '#4f8ef7' },
       { val: dateStr(sprintStart),          lbl: 'Start Date',          col: '#20c997' },
       { val: `${totalSprintWorkdays} days`, lbl: 'Sprint Working Days', col: '#cc5de8' },
       { val: fmtH(totals.totalCapacity),    lbl: 'Total Team Capacity', col: '#4f8ef7' },
