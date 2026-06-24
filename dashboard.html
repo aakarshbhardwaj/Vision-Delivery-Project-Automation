@@ -902,10 +902,10 @@ tr:last-child td { border-bottom: none; }
             <span class="rpt-badge">55.1+</span>
           </div>
 
-          <div class="qi root report-item" data-report="upcoming-sprint" data-name="IR Upcoming Sprint Planning"
+          <div class="qi root report-item" data-report="upcoming-sprint" data-name="IR Sprint Planning"
                onclick="selectReport(this)">
             <span class="qi-dot"></span>
-            <span class="qi-name">IR Upcoming Sprint Planning</span>
+            <span class="qi-name">IR Sprint Planning</span>
             <span class="rpt-badge">Planning</span>
           </div>
 
@@ -1749,7 +1749,7 @@ const REPORT_META = {
   'child-bugs':         { name: 'IR US Related Child Bugs',    badge: 'Live'                },
   'sprint-bug-analysis':{ name: 'IR Sprint Bug Analysis',      badge: 'Live'                },
   'resource-effort':    { name: 'IR Resources Effort Report',  badge: 'Live'                },
-  'upcoming-sprint':    { name: 'IR Upcoming Sprint Planning', badge: 'Planning'            },
+  'upcoming-sprint':    { name: 'IR Sprint Planning',          badge: 'Planning'            },
   'support-tickets':         { name: 'IR Support Tickets',          badge: 'Live'  },
   'iot-release-calendar':    { name: 'IoT Release Calendar 2026',   badge: '2026'  },
 };
@@ -5785,8 +5785,8 @@ function renderUpcomingSprintPlanning({ mode, ongoingLabel, upcomingLabel, sprin
       { val: `Sprint ${sprintLabel}`,       lbl: isOngoing ? 'Ongoing Sprint' : 'Upcoming Sprint', col: '#4f8ef7' },
       { val: dateStr(sprintStart),          lbl: 'Start Date',          col: '#20c997' },
       { val: `${totalSprintWorkdays} days`, lbl: 'Sprint Working Days', col: '#cc5de8' },
-      { val: fmtH(totals.totalCapacity),    lbl: 'Total Team Capacity', col: '#4f8ef7' },
-      { val: fmtH(totals.totalAllocated),   lbl: 'Pre-Allocated Work',  col: '#f59e0b' },
+      { val: fmtH(totals.totalCapacity),    lbl: isOngoing ? 'Available Capacity' : 'Total Team Capacity', col: '#4f8ef7' },
+      { val: fmtH(totals.totalAllocated),   lbl: isOngoing ? 'Remaining Work'     : 'Pre-Allocated Work',  col: '#f59e0b' },
       { val: utilPct + '%',                 lbl: 'Utilisation',         col: utilCol   },
     ].map(k => `
       <div class="rv-cc" style="flex:1;min-width:130px;padding:14px 18px">
@@ -5978,7 +5978,7 @@ function renderUpcomingSprintPlanning({ mode, ongoingLabel, upcomingLabel, sprin
   // Page header
   const header = `
   <div style="margin-bottom:20px">
-    <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:4px">Upcoming Sprint Planning</div>
+    <div style="font-size:20px;font-weight:700;color:var(--text);margin-bottom:4px">${isOngoing ? 'Ongoing' : 'Upcoming'} Sprint Planning</div>
     <div style="font-size:12px;color:var(--muted)">Sprint ${sprintLabel} &nbsp;·&nbsp; ${dateStr(sprintStart)}${sprintEnd ? ' → ' + dateStr(sprintEnd) : ''} &nbsp;·&nbsp; ${totalSprintWorkdays} working days &nbsp;·&nbsp; ${members.length} members</div>
   </div>`;
 

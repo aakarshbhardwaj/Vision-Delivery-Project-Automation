@@ -2479,6 +2479,7 @@ async function fetchUpcomingSprintData(config, progress, params) {
   // Sprint selection: 'ongoing' (current active) or 'upcoming' (next). Both resolve
   // dynamically from the IR calendar, so they auto-advance on each sprint transition.
   const mode = (params && params.mode === 'ongoing') ? 'ongoing' : 'upcoming';
+  const isOngoing = mode === 'ongoing';
   const ongoingNum = resolveActiveSprintNum();
   const ongoingIdx = SPRINT_SCHEDULE_3W.findIndex(s => s.num === ongoingNum);
   const upcomingEntry = SPRINT_SCHEDULE_3W[Math.min((ongoingIdx < 0 ? 0 : ongoingIdx) + 1, SPRINT_SCHEDULE_3W.length - 1)];
@@ -2620,12 +2621,18 @@ async function fetchUpcomingSprintData(config, progress, params) {
       // Skip members not on the capacity board or with zero capacity set
       if (!cap || !cap.capacityPerDay) continue;
       const daysOffCount = Math.max(0, totalSprintWorkdays - (cap.totalSprintDays || 0));
+      // "Available" basis: for the ONGOING sprint use remaining capacity (today → sprint
+      // end, live from ADO); for the UPCOMING sprint use full-sprint capacity.
+      const fullCapacityHrs = cap.totalCapacityHrs || 0;
+      const availableHrs    = isOngoing ? (cap.availableHrs ?? 0) : fullCapacityHrs;
       members.push({
         name, team,
         capacityPerDay:   cap.capacityPerDay,
         totalSprintDays:  cap.totalSprintDays  || 0,
+        remainingDays:    cap.remainingDays    ?? 0,
         daysOffCount,
-        totalCapacityHrs: cap.totalCapacityHrs || 0,
+        fullCapacityHrs,
+        totalCapacityHrs: availableHrs,   // render uses this as the "Available" value
         allocatedBugH: 0, allocatedTaskH: 0, allocatedTotalH: 0, gap: 0,
         items: [],
       });
