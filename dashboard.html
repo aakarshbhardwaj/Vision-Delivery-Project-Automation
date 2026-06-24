@@ -109,69 +109,6 @@ body { background: var(--bg); color: var(--text); font-family: var(--font);
 .loading-wrap.show { display: flex; }
 .loading-msg { display: none; }
 
-/* ── Vision Group animated loader ──────────────────────────────────────────── */
-.vg-ld { display:flex; flex-direction:column; align-items:center; gap:26px; }
-
-/* Wrapper div rotates — guarantees a perfect circle (exact square container) */
-.vg-ld-logo-wrap {
-  width: 96px; height: 96px;
-  display: flex; align-items: center; justify-content: center;
-  animation: vg-rotate 2s linear infinite;
-  will-change: transform;
-}
-@keyframes vg-rotate {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-
-/* SVG: crisp vector, glow via filter — no rotation applied here */
-.vg-ld-svg {
-  display: block;
-  filter: drop-shadow(0 0 7px rgba(204,38,255,.55)) drop-shadow(0 0 16px rgba(0,225,255,.3));
-  shape-rendering: geometricPrecision;
-}
-
-/* Each path lights up in sequence — pink → cyan → purple, repeating */
-.vg-p1 { animation: vg-seq 2.4s ease-in-out infinite 0s; }
-.vg-p2 { animation: vg-seq 2.4s ease-in-out infinite 0.8s; }
-.vg-p3 { animation: vg-seq 2.4s ease-in-out infinite 1.6s; }
-@keyframes vg-seq {
-  0%,100% { opacity:.35; }
-  25%      { opacity:1; }
-  50%,75%  { opacity:.35; }
-}
-
-/* Caption */
-.vg-ld-caption {
-  font-size: 15px; font-weight: 500; letter-spacing: .08em;
-  color: rgba(255,255,255,.65);
-  animation: vg-caption-in .6s ease both;
-  animation-delay: .3s;
-}
-@keyframes vg-caption-in {
-  from { opacity:0; transform:translateY(8px); }
-  to   { opacity:1; transform:translateY(0); }
-}
-.vg-ld-caption .vg-accent {
-  background: linear-gradient(90deg, #00E1FF 0%, #EF66C3 55%, #CC26FF 100%);
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  background-clip: text; font-weight: 700;
-}
-
-/* Animated dots after the caption */
-.vg-dots span {
-  display: inline-block;
-  animation: vg-dot-blink 1.5s ease-in-out infinite;
-  opacity: 0;
-}
-.vg-dots span:nth-child(1) { animation-delay: .0s; }
-.vg-dots span:nth-child(2) { animation-delay: .3s; }
-.vg-dots span:nth-child(3) { animation-delay: .6s; }
-@keyframes vg-dot-blink {
-  0%,100% { opacity:0; }
-  40%,60%  { opacity:1; }
-}
-
 /* ── Page preloader ──────────────────────────────────────────────────────── */
 #vg-preloader {
   position: fixed; inset: 0; z-index: 9999;
@@ -231,7 +168,6 @@ body, .hdr, .sidebar, .layout, #rv-body, .rv-cc, .sc, .qi,
 
 /* Loading overlays */
 [data-theme="light"] .loading-wrap { background: rgba(222,226,242,.96); }
-[data-theme="light"] .vg-ld-caption { color: rgba(28,35,64,.65); }
 [data-theme="light"] #vg-preloader { background: var(--bg); }
 [data-theme="light"] .vg-pre-caption { color: var(--muted); }
 
