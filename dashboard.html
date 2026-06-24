@@ -5784,7 +5784,8 @@ function renderUpcomingSprintPlanning({ mode, ongoingLabel, upcomingLabel, sprin
     ${[
       { val: `Sprint ${sprintLabel}`,       lbl: isOngoing ? 'Ongoing Sprint' : 'Upcoming Sprint', col: '#4f8ef7' },
       { val: dateStr(sprintStart),          lbl: 'Start Date',          col: '#20c997' },
-      { val: `${totalSprintWorkdays} days`, lbl: 'Sprint Working Days', col: '#cc5de8' },
+      { val: `${totalSprintWorkdays} days`, lbl: 'Sprint Working Days', col: '#cc5de8',
+        sub: isOngoing ? `DEV cycle Remaining Days: ${totals.sprintRemainingDays}` : '' },
       { val: fmtH(totals.totalCapacity),    lbl: isOngoing ? 'Available Capacity' : 'Total Team Capacity', col: '#4f8ef7' },
       { val: fmtH(totals.totalAllocated),   lbl: isOngoing ? 'Remaining Work'     : 'Pre-Allocated Work',  col: '#f59e0b' },
       { val: utilPct + '%',                 lbl: 'Utilisation',         col: utilCol   },
@@ -5792,6 +5793,7 @@ function renderUpcomingSprintPlanning({ mode, ongoingLabel, upcomingLabel, sprin
       <div class="rv-cc" style="flex:1;min-width:130px;padding:14px 18px">
         <div style="font-size:22px;font-weight:700;color:${k.col};letter-spacing:-.01em">${k.val}</div>
         <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:3px">${k.lbl}</div>
+        ${k.sub ? `<div style="font-size:10px;color:#cc5de8;font-weight:700;margin-top:5px">${k.sub}</div>` : ''}
       </div>`).join('')}
   </div>`;
 
