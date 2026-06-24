@@ -924,16 +924,7 @@ tr:last-child td { border-bottom: none; }
 
 <!-- Loading overlay -->
 <div class="loading-wrap" id="loading">
-  <div class="vg-ld">
-    <svg class="vg-ld-svg" width="90" height="90" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path class="vg-p1" d="M31.1043 19.315L39.5103 4.96237L30.3319 4.96681L19.7468 23.0056L23.5753 23.0554C26.2685 23.1877 27.6371 22.4008 28.0369 22.1871C29.668 21.4107 30.7419 19.9745 31.1043 19.315Z" fill="#EF66C3"/>
-      <path class="vg-p2" d="M16.6782 4.96446L0.045166 4.96446L4.68757 12.8822L25.6027 12.8996L23.7108 9.57085C22.4638 7.18 21.0932 6.3968 20.7068 6.15977C19.2125 5.14469 17.4305 4.94385 16.6782 4.96446Z" fill="#00E1FF"/>
-      <path class="vg-p3" d="M11.5475 24.5764L19.7483 39.0472L24.3479 31.1045L14.051 12.8996L12.0878 16.1868C10.6225 18.4504 10.6169 20.0291 10.6012 20.4821C10.4548 22.2827 11.1587 23.932 11.5475 24.5764Z" fill="#CC26FF"/>
-    </svg>
-    <div class="vg-ld-caption">
-      Calibrating your <span class="vg-accent">Vision</span><span class="vg-dots"><span>.</span><span>.</span><span>.</span></span>
-    </div>
-  </div>
+  <div class="vg-spinner"></div>
   <div id="loading-msg" style="display:none"></div>
 </div>
 
@@ -1237,18 +1228,7 @@ tr:last-child td { border-bottom: none; }
       </div>
       <!-- Progress panel (shown while fetching) -->
       <div id="rv-progress" style="display:none;flex:1;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:60px">
-        <div class="vg-ld">
-          <div class="vg-ld-logo-wrap">
-            <svg class="vg-ld-svg" width="96" height="96" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path class="vg-p1" d="M31.1043 19.315L39.5103 4.96237L30.3319 4.96681L19.7468 23.0056L23.5753 23.0554C26.2685 23.1877 27.6371 22.4008 28.0369 22.1871C29.668 21.4107 30.7419 19.9745 31.1043 19.315Z" fill="#EF66C3"/>
-              <path class="vg-p2" d="M16.6782 4.96446L0.045166 4.96446L4.68757 12.8822L25.6027 12.8996L23.7108 9.57085C22.4638 7.18 21.0932 6.3968 20.7068 6.15977C19.2125 5.14469 17.4305 4.94385 16.6782 4.96446Z" fill="#00E1FF"/>
-              <path class="vg-p3" d="M11.5475 24.5764L19.7483 39.0472L24.3479 31.1045L14.051 12.8996L12.0878 16.1868C10.6225 18.4504 10.6169 20.0291 10.6012 20.4821C10.4548 22.2827 11.1587 23.932 11.5475 24.5764Z" fill="#CC26FF"/>
-            </svg>
-          </div>
-          <div class="vg-ld-caption">
-            Calibrating your <span class="vg-accent">Vision</span><span class="vg-dots"><span>.</span><span>.</span><span>.</span></span>
-          </div>
-        </div>
+        <div class="vg-spinner"></div>
         <div style="display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:20px">
           <div id="rv-prog-title" style="font-size:11px;color:var(--muted);font-weight:400;letter-spacing:.02em;opacity:.7">Fetching live data…</div>
           <div id="rv-prog-msg" class="rv-loader-sub rv-loader-dots">Connecting</div>
