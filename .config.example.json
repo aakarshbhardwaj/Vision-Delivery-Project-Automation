@@ -8,5 +8,7 @@
 
   "teamsTenantId":    "YOUR-AAD-TENANT-ID",
   "teamsClientId":    "YOUR-APP-REGISTRATION-CLIENT-ID",
-  "teamsClientSecret":"YOUR-APP-REGISTRATION-CLIENT-SECRET"
+  "teamsClientSecret":"YOUR-APP-REGISTRATION-CLIENT-SECRET",
+
+  "claudeKey": "YOUR-ANTHROPIC-API-KEY"
 }

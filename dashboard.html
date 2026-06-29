@@ -990,7 +990,7 @@ tr:last-child td { border-bottom: none; }
             <div class="folder-hdr" onclick="this.parentElement.classList.toggle('open')">
               <span class="f-arrow">▶</span>
               <span style="flex:1;font-size:11px;color:#20c997;font-weight:700">IoT Sprint Reports</span>
-              <span class="f-cnt">1</span>
+              <span class="f-cnt">3</span>
             </div>
             <div class="folder-body">
               <div class="qi report-item" data-report="iot-daily-activity" data-name="IoT Daily Team Activity"
@@ -998,6 +998,18 @@ tr:last-child td { border-bottom: none; }
                 <span class="qi-dot"></span>
                 <span class="qi-name">IoT Daily Team Activity</span>
                 <span class="rpt-badge">Today</span>
+              </div>
+              <div class="qi report-item" data-report="iot-upcoming-release" data-name="IoT Global Mobile Release"
+                   onclick="selectReport(this)">
+                <span class="qi-dot"></span>
+                <span class="qi-name">IoT Global Mobile Release</span>
+                <span class="rpt-badge">Upcoming</span>
+              </div>
+              <div class="qi report-item" data-report="iot-cloud-release" data-name="IoT Global Cloud Release"
+                   onclick="selectReport(this)">
+                <span class="qi-dot"></span>
+                <span class="qi-name">IoT Global Cloud Release</span>
+                <span class="rpt-badge">Upcoming</span>
               </div>
             </div>
           </div>
@@ -1752,6 +1764,8 @@ const REPORT_META = {
   'upcoming-sprint':    { name: 'IR Sprint Planning',          badge: 'Planning'            },
   'support-tickets':         { name: 'IR Support Tickets',          badge: 'Live'  },
   'iot-release-calendar':    { name: 'IoT Release Calendar 2026',   badge: '2026'  },
+  'iot-upcoming-release':    { name: 'IoT Global Mobile Release',   badge: 'Upcoming'  },
+  'iot-cloud-release':       { name: 'IoT Global Cloud Release',   badge: 'Upcoming'  },
 };
 // Update sidebar badge to show computed 6-sprint range
 (function() {
@@ -2029,7 +2043,9 @@ function streamReportData(key) {
       else if (key === 'sprint-bug-analysis') renderSprintBugAnalysis(data.payload);
       else if (key === 'resource-effort')     renderMemberCapacityReport(data.payload);
       else if (key === 'upcoming-sprint')     renderUpcomingSprintPlanning(data.payload);
-      else if (key === 'support-tickets')     renderSupportTickets(data.payload);
+      else if (key === 'support-tickets')       renderSupportTickets(data.payload);
+      else if (key === 'iot-upcoming-release')  renderIoTUpcomingRelease(data.payload);
+      else if (key === 'iot-cloud-release')     renderIoTCloudRelease(data.payload);
     }
   };
 
@@ -6396,6 +6412,241 @@ window.uspDrillMember = function(ti, mi) {
     </div>`;
   subPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 };
+
+// ── IoT Global Upcoming Release ───────────────────────────────────────────────
+function renderIoTUpcomingRelease({ userStories, bugs, total, sprintNum }) {
+  userStories = userStories || [];
+  bugs        = bugs        || [];
+  sprintNum   = sprintNum   || 56;
+  const body  = document.getElementById('rv-body');
+
+  const th = `padding:10px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid var(--border);text-align:left;background:#F8FAFC;overflow:hidden;`;
+  const td = `padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:top;font-size:12.5px;line-height:1.5;overflow:hidden;word-break:break-word;`;
+
+  const sepRow = (label) => `
+    <tr>
+      <td colspan="3" style="padding:8px 14px;font-size:11px;font-weight:700;text-transform:uppercase;
+        letter-spacing:.6px;background:rgba(32,201,151,.08);color:#20c997;border-top:2px solid rgba(32,201,151,.2);
+        border-bottom:1px solid rgba(32,201,151,.15);">
+        ${label}
+      </td>
+    </tr>`;
+
+  const rows = (items) => items.map(it => {
+    const desc = (it.desc || '').trim();
+    return `
+    <tr onclick="window.open('${rvEsc(it.url)}','_blank')" style="cursor:pointer;" onmouseover="this.style.background='#F8FAFC'" onmouseout="this.style.background=''">
+      <td style="${td}font-size:11.5px;font-weight:600;color:var(--accent2);">
+        <div style="font-size:12px;font-weight:700;color:var(--accent2);">#-${it.id}</div>
+        <div style="font-size:11px;color:var(--muted);font-weight:400;margin-top:2px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">${rvEsc(it.title)}</div>
+      </td>
+      <td style="${td}">
+        ${desc
+          ? `<span style="display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;">${rvEsc(desc)}</span>`
+          : '<span style="color:var(--muted2);font-style:italic">—</span>'}
+      </td>
+      <td style="${td}text-align:center;">
+        ${it.platform
+          ? `<span style="display:inline-block;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;background:#F0FDFA;color:#0F766E;border:1px solid rgba(32,201,151,.3);white-space:nowrap;">${rvEsc(it.platform)}</span>`
+          : '<span style="color:var(--muted2);font-style:italic">—</span>'}
+      </td>
+    </tr>`;
+  }).join('');
+
+  const actionBar = `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span style="padding:5px 12px;border-radius:7px;border:1px solid var(--border);
+        font-size:12px;font-weight:700;color:var(--text);background:#F8FAFC;">
+        Sprint ${sprintNum}
+      </span>
+      <button onclick="iotUrDownloadDocx(this)" style="
+        padding:7px 16px;border-radius:8px;border:1px solid rgba(32,201,151,.4);
+        background:rgba(32,201,151,.08);color:#20c997;font-size:12px;font-weight:600;
+        cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+        ⬇ Word (.docx)
+      </button>
+    </div>`;
+
+  body.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:13px;font-weight:700;color:var(--text);">IoT Global Mobile Release</span>
+        <span style="padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;background:#F0FDFA;color:#0F766E;border:1px solid rgba(32,201,151,.3);">${total} items</span>
+        <span style="padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(32,201,151,.08);color:#5dd9b5;">${userStories.length} User Stories / Enhancements</span>
+        <span style="padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(185,28,28,.08);color:#ef4444;">${bugs.length} Bug Fixes</span>
+      </div>
+      ${actionBar}
+    </div>
+
+    <div style="border-radius:10px;border:1px solid var(--border);overflow:hidden;">
+      <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+        <colgroup>
+          <col style="width:22%;">
+          <col style="width:63%;">
+          <col style="width:15%;">
+        </colgroup>
+        <thead>
+          <tr>
+            <th style="${th}">Ref#</th>
+            <th style="${th}">Description</th>
+            <th style="${th}text-align:center;">Platform</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${userStories.length ? sepRow('User Stories / Enhancements and New Features') + rows(userStories) : ''}
+          ${bugs.length        ? sepRow('Bug Fixes')                                   + rows(bugs)        : ''}
+          ${!userStories.length && !bugs.length
+            ? `<tr><td colspan="3" style="padding:32px;text-align:center;color:var(--muted2);font-style:italic;">No items found in query</td></tr>`
+            : ''}
+        </tbody>
+      </table>
+    </div>`;
+
+  // Store for download
+  window._iotUrData = { userStories, bugs, sprintNum };
+}
+
+async function iotUrDownloadDocx(btn) {
+  const { userStories = [], bugs = [], sprintNum = 56 } = window._iotUrData || {};
+  const n = sprintNum;
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.textContent = 'Generating…'; btn.disabled = true; }
+  try {
+    const res = await fetch('/api/release-note-docx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sprintNum: n, userStories, bugs }),
+    });
+    if (!res.ok) { const t = await res.text(); throw new Error(t); }
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `IoT Global_Mobile_Release ${n}_Release Note v1.0.docx`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (err) {
+    alert('Download failed: ' + err.message);
+  } finally {
+    if (btn) { btn.textContent = orig; btn.disabled = false; }
+  }
+}
+
+// ── IoT Global Cloud Release ───────────────────────────────────────────────
+function renderIoTCloudRelease({ userStories, bugs, total, sprintNum }) {
+  userStories = userStories || [];
+  bugs        = bugs        || [];
+  sprintNum   = sprintNum   || 56;
+  const body  = document.getElementById('rv-body');
+
+  const th = `padding:10px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid var(--border);text-align:left;background:#F8FAFC;overflow:hidden;`;
+  const td = `padding:10px 14px;border-bottom:1px solid var(--border);vertical-align:top;font-size:12.5px;line-height:1.5;overflow:hidden;word-break:break-word;`;
+
+  const sepRow = (label) => `
+    <tr>
+      <td colspan="3" style="padding:8px 14px;font-size:11px;font-weight:700;text-transform:uppercase;
+        letter-spacing:.6px;background:rgba(99,102,241,.08);color:#6366f1;border-top:2px solid rgba(99,102,241,.2);
+        border-bottom:1px solid rgba(99,102,241,.15);">
+        ${label}
+      </td>
+    </tr>`;
+
+  const rows = (items) => items.map(it => {
+    const desc = (it.desc || '').trim();
+    return `
+    <tr onclick="window.open('${rvEsc(it.url)}','_blank')" style="cursor:pointer;" onmouseover="this.style.background='#F8FAFC'" onmouseout="this.style.background=''">
+      <td style="${td}font-size:11.5px;font-weight:600;color:#6366f1;">
+        <div style="font-size:12px;font-weight:700;color:#6366f1;">#-${it.id}</div>
+        <div style="font-size:11px;color:var(--muted);font-weight:400;margin-top:2px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">${rvEsc(it.title)}</div>
+      </td>
+      <td style="${td}">
+        ${desc
+          ? `<span style="display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;">${rvEsc(desc)}</span>`
+          : '<span style="color:var(--muted2);font-style:italic">—</span>'}
+      </td>
+      <td style="${td}text-align:center;">
+        ${it.platform
+          ? `<span style="display:inline-block;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;background:#EEF2FF;color:#4338CA;border:1px solid rgba(99,102,241,.3);white-space:nowrap;">${rvEsc(it.platform)}</span>`
+          : '<span style="color:var(--muted2);font-style:italic">—</span>'}
+      </td>
+    </tr>`;
+  }).join('');
+
+  const actionBar = `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span style="padding:5px 12px;border-radius:7px;border:1px solid var(--border);
+        font-size:12px;font-weight:700;color:var(--text);background:#F8FAFC;">
+        Sprint ${sprintNum}
+      </span>
+      <button onclick="iotCrDownloadDocx(this)" style="
+        padding:7px 16px;border-radius:8px;border:1px solid rgba(99,102,241,.4);
+        background:rgba(99,102,241,.08);color:#6366f1;font-size:12px;font-weight:600;
+        cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;">
+        ⬇ Word (.docx)
+      </button>
+    </div>`;
+
+  body.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:13px;font-weight:700;color:var(--text);">IoT Global Cloud Release</span>
+        <span style="padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;background:#EEF2FF;color:#4338CA;border:1px solid rgba(99,102,241,.3);">${total} items</span>
+        <span style="padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(99,102,241,.08);color:#6366f1;">${userStories.length} User Stories / Enhancements</span>
+        <span style="padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(185,28,28,.08);color:#ef4444;">${bugs.length} Bug Fixes</span>
+      </div>
+      ${actionBar}
+    </div>
+
+    <div style="border-radius:10px;border:1px solid var(--border);overflow:hidden;">
+      <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+        <colgroup>
+          <col style="width:22%;">
+          <col style="width:63%;">
+          <col style="width:15%;">
+        </colgroup>
+        <thead>
+          <tr>
+            <th style="${th}">Ref#</th>
+            <th style="${th}">Description</th>
+            <th style="${th}text-align:center;">Platform</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${userStories.length ? sepRow('User Stories / Enhancements and New Features') + rows(userStories) : ''}
+          ${bugs.length        ? sepRow('Bug Fixes')                                   + rows(bugs)        : ''}
+          ${!userStories.length && !bugs.length
+            ? `<tr><td colspan="3" style="padding:32px;text-align:center;color:var(--muted2);font-style:italic;">No items found in query</td></tr>`
+            : ''}
+        </tbody>
+      </table>
+    </div>`;
+
+  window._iotCrData = { userStories, bugs, sprintNum };
+}
+
+async function iotCrDownloadDocx(btn) {
+  const { userStories = [], bugs = [], sprintNum = 56 } = window._iotCrData || {};
+  const n = sprintNum;
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.textContent = 'Generating…'; btn.disabled = true; }
+  try {
+    const res = await fetch('/api/cloud-release-docx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sprintNum: n, userStories, bugs }),
+    });
+    if (!res.ok) { const t = await res.text(); throw new Error(t); }
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `IoT Global_Cloud_Release ${n}_Release Note v1.0.docx`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (err) {
+    alert('Download failed: ' + err.message);
+  } finally {
+    if (btn) { btn.textContent = orig; btn.disabled = false; }
+  }
+}
 
 </script>
 

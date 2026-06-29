@@ -10,6 +10,7 @@ const fs     = require('fs');
 const path   = require('path');
 const os     = require('os');
 const { spawn } = require('child_process');
+const { inflateRawSync, deflateRawSync } = require('zlib');
 
 // One active generation job per report type (prevents duplicate spawns)
 const activeJobs = {};
@@ -39,6 +40,7 @@ let cachedQueries = null;
 if (!config.teamsTenantId) config.teamsTenantId = process.env.TEAMS_TENANT_ID || '';
 if (!config.teamsClientId) config.teamsClientId = process.env.TEAMS_CLIENT_ID || '';
 if (!config.teamsClientSecret) config.teamsClientSecret = process.env.TEAMS_CLIENT_SECRET || '';
+if (!config.claudeKey) config.claudeKey = process.env.ANTHROPIC_API_KEY || '';
 
 // ── Daily Teams reminder scheduler ───────────────────────────────────────────
 // Fires weekdays at 10:00 AM IST (04:30 UTC). Uses setTimeout to avoid
@@ -176,6 +178,402 @@ function mapWI(raw) {
   };
 }
 
+// ─── Release Note DOCX generator (pure Node.js, no external deps) ────────────
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) c = (c & 1) ? (c >>> 1) ^ 0xEDB88320 : c >>> 1;
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(buf) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) c = (c >>> 8) ^ CRC_TABLE[(c ^ buf[i]) & 0xFF];
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+function readDocxZip(buf) {
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65558); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('Invalid DOCX/ZIP');
+  const cdOffset = buf.readUInt32LE(eocd + 16);
+  const cdCount  = buf.readUInt16LE(eocd + 8);
+  const files = [];
+  let pos = cdOffset;
+  for (let i = 0; i < cdCount; i++) {
+    if (buf.readUInt32LE(pos) !== 0x02014b50) break;
+    const method      = buf.readUInt16LE(pos + 10);
+    const crc         = buf.readUInt32LE(pos + 16);
+    const compSize    = buf.readUInt32LE(pos + 20);
+    const uncompSize  = buf.readUInt32LE(pos + 24);
+    const nameLen     = buf.readUInt16LE(pos + 28);
+    const extraLen    = buf.readUInt16LE(pos + 30);
+    const commentLen  = buf.readUInt16LE(pos + 32);
+    const localOffset = buf.readUInt32LE(pos + 42);
+    const name        = buf.slice(pos + 46, pos + 46 + nameLen).toString('utf8');
+    const localNameLen  = buf.readUInt16LE(localOffset + 26);
+    const localExtraLen = buf.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+    const rawData   = buf.slice(dataStart, dataStart + compSize);
+    files.push({ name, method, crc, rawData, uncompSize });
+    pos += 46 + nameLen + extraLen + commentLen;
+  }
+  return files;
+}
+
+function writeDocxZip(files) {
+  const parts   = [];
+  const offsets = [];
+  let pos = 0;
+
+  for (const f of files) {
+    offsets.push(pos);
+    const nameBuf = Buffer.from(f.name, 'utf8');
+    let data, method, fileCrc, uncompSz;
+
+    if (f.newContent !== undefined) {
+      const unc = Buffer.isBuffer(f.newContent) ? f.newContent : Buffer.from(f.newContent, 'utf8');
+      data     = deflateRawSync(unc, { level: 6 });
+      method   = 8;
+      fileCrc  = crc32(unc);
+      uncompSz = unc.length;
+    } else {
+      data     = f.rawData;
+      method   = f.method;
+      fileCrc  = f.crc;
+      uncompSz = f.uncompSize;
+    }
+    f._data = data; f._method = method; f._crc = fileCrc; f._uncompSz = uncompSz;
+
+    const local = Buffer.alloc(30 + nameBuf.length);
+    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(method, 8);     local.writeUInt16LE(0, 10); local.writeUInt16LE(0, 12);
+    local.writeUInt32LE(fileCrc, 14);   local.writeUInt32LE(data.length, 18); local.writeUInt32LE(uncompSz, 22);
+    local.writeUInt16LE(nameBuf.length, 26); local.writeUInt16LE(0, 28);
+    nameBuf.copy(local, 30);
+    parts.push(local, data);
+    pos += local.length + data.length;
+  }
+
+  const cdStart = pos;
+  const cdParts = files.map((f, i) => {
+    const nameBuf = Buffer.from(f.name, 'utf8');
+    const cd = Buffer.alloc(46 + nameBuf.length);
+    cd.writeUInt32LE(0x02014b50, 0); cd.writeUInt16LE(20, 4);  cd.writeUInt16LE(20, 6);
+    cd.writeUInt16LE(0, 8);          cd.writeUInt16LE(f._method, 10); cd.writeUInt16LE(0, 12); cd.writeUInt16LE(0, 14);
+    cd.writeUInt32LE(f._crc, 16);   cd.writeUInt32LE(f._data.length, 20); cd.writeUInt32LE(f._uncompSz, 24);
+    cd.writeUInt16LE(nameBuf.length, 28); cd.writeUInt16LE(0,30); cd.writeUInt16LE(0,32);
+    cd.writeUInt16LE(0, 34); cd.writeUInt16LE(0, 36); cd.writeUInt32LE(0, 38); cd.writeUInt32LE(offsets[i], 42);
+    nameBuf.copy(cd, 46);
+    return cd;
+  });
+
+  const cdSize = cdParts.reduce((s, b) => s + b.length, 0);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(0,4); eocd.writeUInt16LE(0,6);
+  eocd.writeUInt16LE(files.length, 8); eocd.writeUInt16LE(files.length, 10);
+  eocd.writeUInt32LE(cdSize, 12); eocd.writeUInt32LE(cdStart, 16); eocd.writeUInt16LE(0, 20);
+
+  return Buffer.concat([...parts, ...cdParts, eocd]);
+}
+
+function buildDocumentXml(templateXml, n, userStories, bugs) {
+  const x = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  let xml = templateXml
+    .replace(/Release\s+56/g, `Release ${n}`)
+    .replace(/R56_/g, `R${n}_`)
+    .replace(/Sprint\s+56/g, `Sprint ${n}`);
+
+  const h2 = t => `<w:p><w:pPr><w:pStyle w:val="Heading2"/><w:keepLines w:val="0"/><w:shd w:val="clear" w:color="auto" w:fill="FFFFFF" w:themeFill="background1"/><w:spacing w:before="240" w:after="60"/><w:rPr><w:rFonts w:ascii="Times New Roman" w:eastAsia="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:b/><w:color w:val="000000" w:themeColor="text1"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:eastAsia="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:b/><w:color w:val="000000" w:themeColor="text1"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr><w:t>${x(t)}</w:t></w:r></w:p>`;
+
+  const body = t => `<w:p><w:pPr><w:pStyle w:val="BodyText"/><w:shd w:val="clear" w:color="auto" w:fill="FFFFFF" w:themeFill="background1"/><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:color w:val="000000" w:themeColor="text1"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/><w:color w:val="000000" w:themeColor="text1"/></w:rPr><w:t xml:space="preserve">${x(t)}</w:t></w:r></w:p>`;
+
+  const borders = `<w:tcBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tcBorders>`;
+
+  const tc = (w, text, bold, fill) => {
+    const sh = fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : '';
+    const b  = bold ? '<w:b/><w:bCs/>' : '';
+    return `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${borders}${sh}</w:tcPr><w:p><w:pPr><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>${b}<w:sz w:val="20"/></w:rPr></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>${b}<w:sz w:val="20"/></w:rPr><w:t xml:space="preserve">${x(text)}</w:t></w:r></w:p></w:tc>`;
+  };
+
+  const buildTable = items => {
+    const hdr = `<w:tr><w:trPr><w:trHeight w:val="400"/><w:tblHeader/></w:trPr>${tc(1600,'Ref#',true,'D9D9D9')}${tc(6040,'Description',true,'D9D9D9')}${tc(1600,'Platform',true,'D9D9D9')}</w:tr>`;
+    const dataRows = items.map(it => `<w:tr><w:trPr><w:trHeight w:val="500" w:hRule="atLeast"/></w:trPr>${tc(1600,`#-${it.id}  ${it.title}`,false)}${tc(6040,it.desc||it.title,false)}${tc(1600,it.platform||'—',false)}</w:tr>`).join('');
+    return `<w:tbl><w:tblPr><w:tblW w:w="9240" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:left w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:right w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/><w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders><w:tblCellMar><w:left w:w="80" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar><w:tblLook w:val="04A0" w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/></w:tblPr><w:tblGrid><w:gridCol w:w="1600"/><w:gridCol w:w="6040"/><w:gridCol w:w="1600"/></w:tblGrid>${hdr}${dataRows}</w:tbl>`;
+  };
+
+  const blank = `<w:p><w:pPr><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/></w:rPr></w:pPr></w:p>`;
+  const usNum  = userStories.length ? '4' : '';
+  const bugNum = bugs.length        ? (userStories.length ? '5' : '4') : '';
+
+  const usSect = userStories.length ? [
+    h2(`${usNum}.0 NEW FEATURES / ENHANCEMENTS`),
+    body(`Release ${n} of IoT Global - Mobile includes the following new features and enhancements:`),
+    buildTable(userStories),
+    blank,
+  ].join('') : '';
+
+  const bugSect = bugs.length ? [
+    h2(`${bugNum}.0 BUG FIXES`),
+    body(`The following bugs have been resolved in Release ${n} of IoT Global - Mobile:`),
+    buildTable(bugs),
+    blank,
+  ].join('') : '';
+
+  return xml.replace('<w:sectPr', usSect + bugSect + '<w:sectPr');
+}
+
+const RELEASE_NOTE_TEMPLATE = path.join(__dirname, 'IoT Global_Mobile_Release 56_Release Note v1.0.docx');
+
+// Short-lived PDF preview token store (max 10 min TTL)
+const pdfTokenStore = {};
+setInterval(() => {
+  const cut = Date.now() - 600000;
+  for (const k of Object.keys(pdfTokenStore)) {
+    if (pdfTokenStore[k].ts < cut) delete pdfTokenStore[k];
+  }
+}, 120000);
+
+function getTemplateImages() {
+  try {
+    const buf   = fs.readFileSync(RELEASE_NOTE_TEMPLATE);
+    const files = readDocxZip(buf);
+    const get   = name => {
+      const f = files.find(z => z.name === `word/media/${name}`);
+      if (!f) return '';
+      return (f.method === 8 ? inflateRawSync(f.rawData) : f.rawData).toString('base64');
+    };
+    return { img1: get('image1.png'), img2: get('image2.png'), img3: get('image3.png'), img4: get('image4.png') };
+  } catch (_) { return {}; }
+}
+
+function buildPdfHtml({ sprintNum = 56, userStories = [], bugs = [] }, imgs) {
+  const n      = parseInt(sprintNum) || 56;
+  const esc    = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const dateStr = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
+
+  // Base-64 URIs for each template image
+  const uri = (b64, type='png') => b64 ? `data:image/${type};base64,${b64}` : '';
+
+  const tableHtml = (items, label) => {
+    if (!items.length) return '';
+    const rows = items.map((it, i) => `
+      <tr style="background:${i%2===0?'#fff':'#F9FAFB'}">
+        <td class="td" style="width:18%;"><strong>#-${esc(String(it.id))}</strong><br><span style="font-size:9pt;color:#555;">${esc(it.title)}</span></td>
+        <td class="td" style="width:67%;">${esc(it.desc || it.title)}</td>
+        <td class="td" style="width:15%;text-align:center;">${esc(it.platform)||'—'}</td>
+      </tr>`).join('');
+    return `
+      <h2 class="sec-hd">${esc(label)}</h2>
+      <table class="data-tbl">
+        <thead><tr>
+          <th class="th" style="width:18%">Ref#</th>
+          <th class="th" style="width:67%">Description</th>
+          <th class="th" style="width:15%;text-align:center">Platform</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  };
+
+  const usSect  = tableHtml(userStories, `4.0 NEW FEATURES / ENHANCEMENTS (${userStories.length})`);
+  const bugSect = tableHtml(bugs, `${userStories.length?'5':'4'}.0 BUG FIXES (${bugs.length})`);
+
+  /* ── Exact positions extracted from Word XML (EMU → mm) ──
+     A4: 210×297mm | margins: top 25mm, right 19mm, bottom 18mm, left 19mm
+     image3 (banner  877×263px): page left=6.8mm, page top=27.5mm, width=67.4mm
+     image1 (logo   171×505px):  page right edge +5.2mm, page top=14.1mm, width=13.8mm  → CSS right:0 top:14mm
+     image4 (footer 816×48px):   page left≈0, full width, bottom of page
+     image2 (watermark 467×403px): centered on content margin, 160×138mm, opacity 0.15
+  ──────────────────────────────────────────────────────────── */
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IoT Global_Mobile_Release ${n}_Release Note v1.0</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Times New Roman',serif;font-size:11pt;color:#000;background:#d0d0d0;}
+
+  /* ── Page shell (screen only) ── */
+  .pg-shell{
+    width:210mm;margin:10mm auto 80px;background:#fff;
+    box-shadow:0 4px 24px rgba(0,0,0,.25);
+    position:relative;
+    padding:27.5mm 19mm 22mm 19mm; /* match Word margins */
+    min-height:297mm;
+  }
+
+  /* ── Watermark ── */
+  .wm{
+    position:absolute;top:50%;left:50%;
+    transform:translate(-50%,-50%);
+    width:160mm;height:auto;
+    opacity:0.13;z-index:0;pointer-events:none;
+  }
+
+  /* ── Header images (screen: absolute inside .pg-shell) ── */
+  .hdr-banner{
+    position:absolute;
+    top:0;           /* 0 from pg-shell top = 0mm into top margin area, which we've set to 27.5mm padding */
+    left:6.8mm;
+    width:67.4mm;height:auto;
+    /* visually in top margin: nudge up */
+    top:-22mm;       /* 27.5mm padding - ~5.5mm = image sits at ~22mm from page top edge = within top margin */
+  }
+  .hdr-logo{
+    position:absolute;
+    top:-11mm;right:0; /* right edge of pg-shell = right margin line; image overflows right 5.2mm into gutter */
+    width:13.8mm;height:auto;
+  }
+
+  /* ── Footer image (screen) ── */
+  .pg-ftr{
+    position:absolute;
+    bottom:0;left:0;right:0;
+    height:14mm;overflow:hidden;
+  }
+  .pg-ftr img{width:100%;height:100%;object-fit:fill;display:block;}
+
+  /* ── Document content above the z-0 watermark ── */
+  .doc-body{position:relative;z-index:1;}
+
+  /* ── Typography ── */
+  .cover{text-align:center;padding:14mm 0 10mm;}
+  .cover-title{font-family:Calibri,sans-serif;font-size:24pt;font-weight:700;color:#EE0000;line-height:1.25;}
+  .meta-tbl{width:100%;border-collapse:collapse;margin-bottom:14pt;font-size:10.5pt;}
+  .meta-tbl td{border:1px solid #aaa;padding:5pt 8pt;}
+  .meta-tbl .lbl{background:#D9D9D9;width:100pt;}
+  .sec-hd{font-family:'Times New Roman',serif;font-size:11pt;font-weight:700;color:#000;margin:14pt 0 4pt;}
+  p.bp{font-family:'Times New Roman',serif;font-size:11pt;margin-bottom:6pt;}
+  .data-tbl{width:100%;border-collapse:collapse;margin-bottom:14pt;table-layout:fixed;font-size:10pt;}
+  .th{border:1px solid #bbb;padding:5pt 6pt;background:#D9D9D9;text-align:left;font-size:10pt;}
+  .td{border:1px solid #bbb;padding:5pt 6pt;vertical-align:top;line-height:1.4;}
+
+  /* ── Screen-only action bar ── */
+  .action-bar{
+    position:fixed;bottom:20px;right:24px;
+    display:flex;gap:10px;z-index:9999;
+  }
+  .btn-close{padding:10px 18px;border-radius:8px;border:1px solid #bbb;background:#f0f0f0;font-size:13px;font-weight:600;cursor:pointer;}
+  .btn-pdf{padding:10px 20px;border-radius:8px;border:none;background:#EE0000;color:#fff;font-size:13px;font-weight:700;cursor:pointer;}
+
+  /* ────────────────── PRINT ────────────────── */
+  @media print{
+    @page{size:A4;margin:25mm 19mm 18mm 19mm;}
+
+    body{background:#fff;}
+    .pg-shell{
+      width:auto;margin:0;padding:0;
+      box-shadow:none;min-height:auto;
+      position:static;
+    }
+    .action-bar{display:none!important;}
+
+    /* Watermark: fixed, centered, every page */
+    .wm{
+      position:fixed;
+      top:50%;left:50%;
+      transform:translate(-50%,-50%);
+      width:160mm;height:auto;
+      opacity:0.13;z-index:-1;
+    }
+
+    /* Banner (image3): top=27.5mm from page top, left=6.8mm from page left */
+    .hdr-banner{
+      position:fixed;
+      top:27.5mm;left:6.8mm;
+      width:67.4mm;height:auto;
+      z-index:-1;
+    }
+
+    /* Logo strip (image1): top=14mm from page top, right edge of page */
+    .hdr-logo{
+      position:fixed;
+      top:14mm;right:0;
+      width:13.8mm;height:auto;
+      z-index:-1;
+    }
+
+    /* Footer (image4): full width across bottom margin */
+    .pg-ftr{
+      position:fixed;
+      bottom:0;left:0;right:0;
+      height:18mm;overflow:hidden;
+    }
+
+    .doc-body{z-index:auto;}
+    table{page-break-inside:auto;}
+    tr{page-break-inside:avoid;}
+    h2{page-break-after:avoid;}
+  }
+</style>
+</head>
+<body>
+
+<div class="pg-shell">
+
+  <!-- Watermark behind everything -->
+  ${imgs.img2 ? `<img class="wm" src="${uri(imgs.img2)}" alt="">` : ''}
+
+  <!-- Header: banner (left) + logo strip (right) -->
+  ${imgs.img3 ? `<img class="hdr-banner" src="${uri(imgs.img3)}" alt="">` : ''}
+  ${imgs.img1 ? `<img class="hdr-logo"   src="${uri(imgs.img1)}" alt="">` : ''}
+
+  <!-- Footer bar -->
+  <div class="pg-ftr">
+    ${imgs.img4 ? `<img src="${uri(imgs.img4)}" alt="">` : ''}
+  </div>
+
+  <!-- Document content -->
+  <div class="doc-body">
+
+    <div class="cover">
+      <div class="cover-title">RELEASE NOTES<br>IoT Global - Mobile</div>
+    </div>
+
+    <table class="meta-tbl">
+      <tr><td class="lbl">Product</td>        <td><em>IoT Mobile</em></td></tr>
+      <tr><td class="lbl">Document Title</td> <td><strong>IoT Global_Mobile_R${n}_Release Note v1.0</strong></td></tr>
+      <tr><td class="lbl">Prepared By</td>    <td><em>Aakarsh Bharadwaj</em></td></tr>
+      <tr><td class="lbl">Date</td>           <td>${dateStr}</td></tr>
+    </table>
+
+    <h2 class="sec-hd">1.0 INTRODUCTION</h2>
+    <p class="bp">The document communicates the major new features and changes in this release of <strong>IoT Global-Mobile</strong>. It also documents known problems and workarounds.</p>
+
+    <h2 class="sec-hd">2.0 ABOUT THIS RELEASE</h2>
+    <p class="bp"><strong>Release ${n}</strong> of IoT Global -Mobile consists of the below mentioned Tasks and Bugs for Mobile.</p>
+
+    <h2 class="sec-hd">3.0 COMPATIBLE PRODUCTS</h2>
+    <p class="bp">• Minimum version should be Android 12.0 and above</p>
+    <p class="bp">• Minimum BLE version 5.0 and above in mobile.</p>
+
+    ${usSect}
+    ${bugSect}
+
+  </div><!-- /doc-body -->
+
+</div><!-- /pg-shell -->
+
+<!-- Screen-only action bar -->
+<div class="action-bar">
+  <button class="btn-close" onclick="window.close()">✕ Close</button>
+  <button class="btn-pdf"   onclick="window.print()">⬇ Save as PDF</button>
+</div>
+
+</body>
+</html>`;
+}
+
 // ─── LAN IP ───────────────────────────────────────────────────────────────────
 
 function getLANIP() {
@@ -295,7 +693,9 @@ const server = http.createServer(async (req, res) => {
         'sprint-bug-analysis': reportData.fetchSprintBugAnalysisData,
         'resource-effort':     reportData.fetchMemberCapacityReport,
         'upcoming-sprint':     reportData.fetchUpcomingSprintData,
-        'support-tickets':     reportData.fetchSupportTicketsData,
+        'support-tickets':          reportData.fetchSupportTicketsData,
+        'iot-upcoming-release':     reportData.fetchIoTUpcomingReleaseData,
+        'iot-cloud-release':        reportData.fetchIoTCloudReleaseData,
       };
       if (!fetchers[report]) { res.writeHead(400); return res.end('Unknown report'); }
 
@@ -326,8 +726,11 @@ const server = http.createServer(async (req, res) => {
         ? `onhold_${todayStr}`
         : report;
 
+      // these reports always fetch live from ADO (query changes per sprint)
+      const noCache = report === 'iot-upcoming-release' || report === 'iot-cloud-release';
+
       // Check cache
-      const cached = reportCache[cacheKey];
+      const cached = !noCache && reportCache[cacheKey];
       if (cached && (Date.now() - cached.ts) < CACHE_TTL) {
         send({ type: 'progress', msg: 'Loading from cache (data is < 10 min old)…' });
         send({ type: 'done', payload: cached.payload });
@@ -338,7 +741,7 @@ const server = http.createServer(async (req, res) => {
       const params   = { date, sprintPath, mode };
       try {
         const payload = await fetchers[report](config, progress, params);
-        reportCache[cacheKey] = { ts: Date.now(), payload };
+        if (!noCache) reportCache[cacheKey] = { ts: Date.now(), payload };
         send({ type: 'done', payload });
       } catch(e) {
         send({ type: 'error', msg: e.message });
@@ -528,6 +931,112 @@ const server = http.createServer(async (req, res) => {
       // Stream result back — run in background, respond once done
       const result = await teamsNotifier.sendSupportTicketReminders(config);
       return res.end(JSON.stringify(result));
+    }
+
+    // ── API: store PDF data & return preview token ────────────────────────────
+    if (url.pathname === '/api/release-note-pdf-store' && req.method === 'POST') {
+      let raw = '';
+      req.on('data', c => raw += c);
+      await new Promise(resolve => req.on('end', resolve));
+      const data  = JSON.parse(raw);
+      const token = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      pdfTokenStore[token] = { data, ts: Date.now() };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ token }));
+    }
+
+    // ── API: serve VG-template print page for PDF ─────────────────────────────
+    if (url.pathname === '/api/release-note-pdf-page' && req.method === 'GET') {
+      const token = url.searchParams.get('t');
+      const entry = pdfTokenStore[token];
+      if (!entry) {
+        res.writeHead(410, { 'Content-Type': 'text/html; charset=utf-8' });
+        return res.end('<h2 style="font-family:sans-serif;padding:40px">Link expired — please click the PDF button again.</h2>');
+      }
+      const imgs = getTemplateImages();
+      const html = buildPdfHtml(entry.data, imgs);
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      return res.end(html);
+    }
+
+    // ── API: download release note as .docx ──────────────────────────────────
+    if (url.pathname === '/api/release-note-docx' && req.method === 'POST') {
+      let raw = '';
+      req.on('data', c => raw += c);
+      await new Promise(resolve => req.on('end', resolve));
+      const { sprintNum, userStories = [], bugs = [] } = JSON.parse(raw);
+      const n = parseInt(sprintNum) || 56;
+
+      if (!fs.existsSync(RELEASE_NOTE_TEMPLATE)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Template .docx not found' }));
+      }
+
+      const templateBuf = fs.readFileSync(RELEASE_NOTE_TEMPLATE);
+      const zipFiles    = readDocxZip(templateBuf);
+      const docEntry    = zipFiles.find(f => f.name === 'word/document.xml');
+      if (!docEntry) throw new Error('Template missing word/document.xml');
+
+      const templateXml = docEntry.method === 8
+        ? inflateRawSync(docEntry.rawData).toString('utf8')
+        : docEntry.rawData.toString('utf8');
+
+      const newDocXml = buildDocumentXml(templateXml, n, userStories, bugs);
+      const modifiedFiles = zipFiles.map(f =>
+        f.name === 'word/document.xml' ? { ...f, newContent: Buffer.from(newDocXml, 'utf8') } : f
+      );
+
+      const docxBuf  = writeDocxZip(modifiedFiles);
+      const filename = `IoT Global_Mobile_Release ${n}_Release Note v1.0.docx`;
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Length': docxBuf.length,
+      });
+      return res.end(docxBuf);
+    }
+
+    // ── API: download Cloud release note as .docx ────────────────────────────
+    if (url.pathname === '/api/cloud-release-docx' && req.method === 'POST') {
+      let raw = '';
+      req.on('data', c => raw += c);
+      await new Promise(resolve => req.on('end', resolve));
+      const { sprintNum, userStories = [], bugs = [] } = JSON.parse(raw);
+      const n = parseInt(sprintNum) || 56;
+
+      if (!fs.existsSync(RELEASE_NOTE_TEMPLATE)) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'Template .docx not found' }));
+      }
+
+      const templateBuf = fs.readFileSync(RELEASE_NOTE_TEMPLATE);
+      const zipFiles    = readDocxZip(templateBuf);
+      const docEntry    = zipFiles.find(f => f.name === 'word/document.xml');
+      if (!docEntry) throw new Error('Template missing word/document.xml');
+
+      const templateXml = docEntry.method === 8
+        ? inflateRawSync(docEntry.rawData).toString('utf8')
+        : docEntry.rawData.toString('utf8');
+
+      // Build document then swap Mobile → Cloud throughout
+      let newDocXml = buildDocumentXml(templateXml, n, userStories, bugs);
+      newDocXml = newDocXml
+        .replace(/IoT Global - Mobile/g, 'IoT Global - Cloud')
+        .replace(/IoT Global_Mobile/g,   'IoT Global_Cloud')
+        .replace(/IoT Global-Mobile/g,   'IoT Global-Cloud');
+
+      const modifiedFiles = zipFiles.map(f =>
+        f.name === 'word/document.xml' ? { ...f, newContent: Buffer.from(newDocXml, 'utf8') } : f
+      );
+
+      const docxBuf  = writeDocxZip(modifiedFiles);
+      const filename = `IoT Global_Cloud_Release ${n}_Release Note v1.0.docx`;
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Length': docxBuf.length,
+      });
+      return res.end(docxBuf);
     }
 
     res.writeHead(404);
