@@ -4568,6 +4568,8 @@ function renderInfoNeeded({ items, assignees, byAssignee, avgAge, maxAge, bucket
   const body = document.getElementById('rv-body');
   window._inItems  = items;
   window._inByAsgn = byAssignee;
+  window._inAvg    = avgAge;
+  window._inMax    = maxAge;
   window._inF      = { bucket: 'all', type: '', assignee: '' };
 
   const critCount = buckets.critical || 0;
@@ -4577,13 +4579,13 @@ function renderInfoNeeded({ items, assignees, byAssignee, avgAge, maxAge, bucket
     <div class="sh-kpi" style="cursor:pointer" onclick="inFilter('all')">
       <div class="sh-kpi-val">${total}</div><div class="sh-kpi-lbl">Total Items</div>
     </div>
-    <div class="sh-kpi">
-      <div class="sh-kpi-val" style="color:${inAgeColor(avgAge)}">${avgAge}d</div><div class="sh-kpi-lbl">Avg Age</div>
+    <div class="sh-kpi" style="cursor:pointer" onclick="inFilter('avgplus')" title="Items aged at or above the average">
+      <div class="sh-kpi-val" style="color:${inAgeColor(avgAge)}">${avgAge} Days</div><div class="sh-kpi-lbl">Avg Age</div>
     </div>
-    <div class="sh-kpi">
-      <div class="sh-kpi-val" style="color:${inAgeColor(maxAge)}">${maxAge}d</div><div class="sh-kpi-lbl">Longest Pending</div>
+    <div class="sh-kpi" style="cursor:pointer" onclick="inFilter('longest')" title="Longest-pending item(s)">
+      <div class="sh-kpi-val" style="color:${inAgeColor(maxAge)}">${maxAge} Days</div><div class="sh-kpi-lbl">Longest Pending</div>
     </div>
-    <div class="sh-kpi">
+    <div class="sh-kpi" style="cursor:pointer" onclick="inShowAssignees()" title="Jump to the per-assignee breakdown">
       <div class="sh-kpi-val" style="color:#4f8ef7">${assignees.length}</div><div class="sh-kpi-lbl">Assignees</div>
     </div>
     <div class="sh-kpi" style="cursor:pointer" onclick="inFilter('critical')">
@@ -4613,27 +4615,26 @@ function renderInfoNeeded({ items, assignees, byAssignee, avgAge, maxAge, bucket
     </div>`;
   }).join('');
 
-  // Per-assignee cards
-  const asnHtml = assignees.map(name => {
-    const ai    = byAssignee[name] || [];
-    const avgA  = ai.length ? Math.round(ai.reduce((s,i) => s + i.daysInState, 0) / ai.length) : 0;
-    const maxA  = ai.length ? ai[0].daysInState : 0;
-    const col   = inAgeColor(maxA);
-    const chips = ai.slice(0, 10).map(i =>
-      `<span class="in-age-chip ${inAgeClass(i.daysInState)}" title="#${i.id}: ${rvEsc(i.title)}">${i.daysInState}d</span>`
-    ).join('');
-    const more = ai.length > 10 ? `<span style="font-size:10px;color:var(--muted)"> +${ai.length - 10}</span>` : '';
-    const safeName = rvEsc(name).replace(/'/g, '&#39;');
-    return `<div class="in-person-card" onclick="inFilterAssignee('${safeName}')" style="border-top-color:${col}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
-        <div style="font-size:12px;font-weight:700;color:var(--text)">${rvEsc(name) || 'Unassigned'}</div>
-        <div style="font-size:10px;color:var(--muted)">${ai.length} item${ai.length !== 1 ? 's' : ''}</div>
-      </div>
-      <div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:10px;align-items:center">${chips}${more}</div>
-      <div style="display:flex;gap:16px">
-        <div><div style="font-size:18px;font-weight:800;color:${col};line-height:1">${maxA}d</div><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:2px">Max Age</div></div>
-        <div><div style="font-size:18px;font-weight:800;color:${inAgeColor(avgA)};line-height:1">${avgA}d</div><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:2px">Avg Age</div></div>
-      </div>
+  // Per-assignee horizontal bars — sorted by workload (item count), bar colour
+  // encodes the assignee's oldest item age (red = has critical items). Full-width
+  // rows give a large tap target; click filters the table to that assignee.
+  const asnRows = assignees.map(name => {
+    const ai   = byAssignee[name] || [];
+    const maxA = ai.length ? ai[0].daysInState : 0;            // items are sorted oldest-first
+    const avgA = ai.length ? Math.round(ai.reduce((s,i) => s + i.daysInState, 0) / ai.length) : 0;
+    return { name, count: ai.length, maxA, avgA };
+  }).sort((a, b) => b.count - a.count || b.maxA - a.maxA);
+  const asnMaxCount = Math.max(1, ...asnRows.map(r => r.count));
+  const asnHtml = asnRows.map(r => {
+    const col = inAgeColor(r.maxA);
+    const pct = (r.count / asnMaxCount * 100).toFixed(1);
+    const safeName = rvEsc(r.name).replace(/'/g, '&#39;');
+    return `<div class="sh-bar-row" onclick="inFilterAssignee('${safeName}')" style="gap:10px"
+        title="${rvEsc(r.name) || 'Unassigned'} · ${r.count} item(s) · max ${r.maxA}d · avg ${r.avgA}d">
+      <div class="sh-bar-lbl" style="min-width:140px;max-width:140px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${rvEsc(r.name) || 'Unassigned'}</div>
+      <div class="sh-bar-track"><div class="sh-bar-seg" style="width:${pct}%;background:${col}"></div></div>
+      <div style="min-width:64px;text-align:right;font-size:10px;color:${col};font-weight:600">${r.maxA}d max</div>
+      <div class="sh-bar-count" style="min-width:24px">${r.count}</div>
     </div>`;
   }).join('');
 
@@ -4649,13 +4650,13 @@ function renderInfoNeeded({ items, assignees, byAssignee, avgAge, maxAge, bucket
         <div class="sh-bars-title" style="margin-bottom:10px">Age Distribution <span style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0">(click to filter)</span></div>
         ${distHtml}
       </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;overflow-y:auto;max-height:320px">
-        <div class="sh-bars-title" style="margin-bottom:10px">By Assignee <span style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0">(click to filter)</span></div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">${asnHtml}</div>
+      <div id="in-asgn-panel" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;overflow-y:auto;max-height:320px">
+        <div class="sh-bars-title" style="margin-bottom:10px">By Assignee — workload &amp; oldest item <span style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0">(click a row to filter)</span></div>
+        <div>${asnHtml}</div>
       </div>
     </div>
 
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;overflow-x:auto">
+    <div id="in-table-section" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;overflow-x:auto;scroll-margin-top:12px">
       <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
         <div class="sh-bars-title" id="in-table-title" style="margin-bottom:0;flex-shrink:0">All Items (${total})</div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:auto">
@@ -4685,7 +4686,8 @@ function renderInfoNeeded({ items, assignees, byAssignee, avgAge, maxAge, bucket
 window._inF = { bucket: 'all', type: '', assignee: '' };
 
 const IN_AGE_RANGES = { fresh:[0,3], moderate:[4,7], stale:[8,14], critical:[15,Infinity] };
-const IN_AGE_LBLS   = { fresh:'0–3 days', moderate:'4–7 days', stale:'8–14 days', critical:'15+ days' };
+const IN_AGE_LBLS   = { fresh:'0–3 days', moderate:'4–7 days', stale:'8–14 days', critical:'15+ days',
+                        avgplus:'Aged ≥ average', longest:'Longest pending' };
 
 window.inApplyFilters = function() {
   const all = window._inItems || [];
@@ -4696,7 +4698,11 @@ window.inApplyFilters = function() {
   if (asgnEl) f.assignee = asgnEl.value;
 
   let filtered = all;
-  if (f.bucket !== 'all') {
+  if (f.bucket === 'avgplus') {
+    filtered = filtered.filter(i => i.daysInState >= (window._inAvg || 0));
+  } else if (f.bucket === 'longest') {
+    filtered = filtered.filter(i => i.daysInState >= (window._inMax || 0));
+  } else if (f.bucket !== 'all') {
     const [lo, hi] = IN_AGE_RANGES[f.bucket] || [0, Infinity];
     filtered = filtered.filter(i => i.daysInState >= lo && i.daysInState <= hi);
   }
@@ -4718,17 +4724,35 @@ window.inApplyFilters = function() {
   if (tbody) tbody.innerHTML = filtered.map(inBuildRow).join('');
 };
 
+function inScrollToTable() {
+  document.getElementById('in-table-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 window.inFilter = function(bucket) {
   window._inF.bucket = bucket;
+  // Age Distribution and By Assignee are independent — selecting an age bucket
+  // clears any active assignee filter (and vice-versa).
+  window._inF.assignee = '';
+  const asgnEl = document.getElementById('in-filter-asgn');
+  if (asgnEl) asgnEl.value = '';
   inApplyFilters();
+  inScrollToTable();
+};
+
+window.inShowAssignees = function() {
+  inClearFilters();
+  document.getElementById('in-asgn-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
 
 window.inFilterAssignee = function(name) {
   const decoded = name.replace(/&#39;/g, "'");
   window._inF.assignee = decoded;
+  // Independent of Age Distribution — picking an assignee clears any age-bucket filter.
+  window._inF.bucket = 'all';
   const asgnEl = document.getElementById('in-filter-asgn');
   if (asgnEl) asgnEl.value = decoded;
   inApplyFilters();
+  inScrollToTable();
 };
 
 window.inClearFilters = function() {
