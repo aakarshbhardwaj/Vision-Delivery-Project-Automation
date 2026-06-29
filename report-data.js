@@ -2077,6 +2077,30 @@ async function fetchSprintBugAnalysisData(config, progress) {
   const Q_CHILD   = '61f5672b-53ea-41f8-9d01-9b02e7e507e6';
   const Q_RELATED = 'da28163f-cdb4-4ac9-8f8b-f10b5de7cb9a';
 
+  // Bug-category saved queries — Shared Queries / IR Delivery Internal Reports / Bugs
+  // Each becomes a drill-down category in the report.
+  const BUG_CATEGORIES = [
+    { key:'sprint-overall', name:'Sprint Overall Bug',              id:'61774268-0a51-4601-bb83-c7d6e5ab1314' },
+    { key:'sprint-open',    name:'Sprint Open Bugs',                id:'a20f1a55-badf-4dee-9998-59b889c0bce1' },
+    { key:'must-fix',       name:'Must Fix Bugs',                   id:'4d89069b-8a0b-4488-aaa7-1c217c1de22a' },
+    { key:'bugs-by-qa',     name:'Bugs Raised by QA',               id:'60ff3e56-d7a7-41ad-a106-18fe233a53d6' },
+    { key:'induced',        name:'Induced Bugs',                    id:'44e12626-ef7a-47d3-9246-95548273ef77' },
+    { key:'api-related',    name:'API related Bug',                 id:'966c4c63-e6cd-48ef-b013-d1611ff5ec64' },
+    { key:'lower-env',      name:'Bugs on lower Environment',       id:'549bf25e-ed24-4646-8092-2a90f7de1294' },
+    { key:'moved-last',     name:'Moved from Last Sprint Bug',      id:'32b7453f-13c0-4847-a462-45afd4685b59' },
+    { key:'prod-deploy',    name:'Production Deployment Bugs',      id:'47a44ac8-df75-4eac-a6fd-3201fffb6f92' },
+    { key:'prod-open',      name:'Production Bugs Open Issues',     id:'d24f5cd3-e5a2-45b2-b24d-198007de0bf4' },
+    { key:'uat',            name:'UAT- Bugs Raised by Product Team',id:'b6fdf661-b135-4bcd-97ab-629dcb34305d' },
+    { key:'triage',         name:'Triage- Bugs',                    id:'fe769c26-19c4-4cf4-b2d6-d866cf424b1e' },
+    { key:'bb',             name:'BB',                              id:'545a8503-a7ad-436e-8535-9097c6801423' },
+    { key:'r1',             name:'R1',                              id:'0f71e82b-af81-482d-a65f-b0b9e7a3f852' },
+    { key:'ppr-testing',    name:'PPR Testing Bugs',                id:'b8ec6dc2-8fe3-45c5-aef8-1a576b26641c' },
+    { key:'us-ppr-week',    name:'US relevant Bugs- PPR Week',      id:'dcc93136-7883-4b58-b11c-fc634883d841' },
+    { key:'inprogress',     name:'In Progress US and Bugs',         id:'d9dbb8fe-277f-46a1-8f5e-0ca0afad3ee8' },
+  ];
+  // QA / testing User Stories whose child bugs are surfaced as a dedicated section.
+  const QA_US_IDS = [212233, 215492, 216638, 221512, 214504, 212287, 220972, 219697];
+
   const FIELDS = [
     'System.Id', 'System.Title', 'System.State', 'System.Reason',
     'System.WorkItemType', 'System.AssignedTo', 'System.CreatedDate',
@@ -2103,10 +2127,33 @@ async function fetchSprintBugAnalysisData(config, progress) {
   const childIds   = extractIds(childWiql);
   const relatedIds = extractIds(relatedWiql);
 
-  const allUniqueIds = [...new Set([...overallIds, ...childIds, ...relatedIds])];
+  // Execute the bug-category queries + fetch child links for the QA US set
+  progress('Executing bug-category queries…');
+  const catResults = await Promise.all(
+    BUG_CATEGORIES.map(c => adoFetch(config, `${baseApi}/wit/wiql/${c.id}?api-version=7.1`).catch(() => null))
+  );
+  const catRaw = BUG_CATEGORIES.map((c, i) => ({ ...c, rawIds: extractIds(catResults[i]) }));
+
+  const usChildRaw = {};   // usId → { id, title, state, childIds:[] }
+  try {
+    const usResp = await adoFetch(config, `${baseApi}/wit/workitems?ids=${QA_US_IDS.join(',')}&$expand=relations&api-version=7.1`);
+    for (const us of (usResp.value || [])) {
+      const kids = (us.relations || [])
+        .filter(r => r.rel === 'System.LinkTypes.Hierarchy-Forward')
+        .map(r => parseInt(r.url.split('/').pop())).filter(Boolean);
+      usChildRaw[us.id] = { id: us.id, title: (us.fields || {})['System.Title'] || '',
+        state: (us.fields || {})['System.State'] || '', childIds: kids };
+    }
+  } catch (_) {}
+
+  const allUniqueIds = [...new Set([
+    ...overallIds, ...childIds, ...relatedIds,
+    ...catRaw.flatMap(c => c.rawIds),
+    ...Object.values(usChildRaw).flatMap(u => u.childIds),
+  ])];
   if (!allUniqueIds.length) {
     progress('No items found in any query.');
-    return { overallBugs:[], childBugs:[], relatedBugs:[], usLinkedBugs:[], nonUsBugs:[], kpis:{}, breakdowns:{} };
+    return { overallBugs:[], childBugs:[], relatedBugs:[], usLinkedBugs:[], nonUsBugs:[], kpis:{}, breakdowns:{}, categories:[], qaTestingUS:[], bugById:{} };
   }
 
   progress(`Overall: ${overallIds.length}  ·  Child: ${childIds.length}  ·  Related: ${relatedIds.length}. Fetching details…`);
@@ -2146,9 +2193,11 @@ async function fetchSprintBugAnalysisData(config, progress) {
   const usLinkedBugs = [...usLinkedSet].map(id => itemMap[id]).filter(Boolean);
   const nonUsBugs    = overallBugs.filter(b => !usLinkedSet.has(b.id));
 
-  // Fetch latest comment for all bugs
-  progress(`Fetching comments for ${allUniqueIds.length} item(s)…`);
-  await Promise.all(Object.values(itemMap).map(async item => {
+  // Fetch latest comment only for the core US-linked / overall sets (keeps the
+  // category drill-downs fast — they can include hundreds of bugs).
+  const commentIds = [...new Set([...overallIds, ...childIds, ...relatedIds])];
+  progress(`Fetching comments for ${commentIds.length} item(s)…`);
+  await Promise.all(commentIds.map(id => itemMap[id]).filter(Boolean).map(async item => {
     try {
       const res = await adoFetch(config, `${baseApi}/wit/workItems/${item.id}/comments?$top=100&api-version=7.1-preview.3`);
       const sorted = (res.comments || []).slice().sort((a, b) => new Date(b.createdDate) - new Date(a.createdDate));
@@ -2199,8 +2248,23 @@ async function fetchSprintBugAnalysisData(config, progress) {
     open:       overallBugs.filter(b => !['Closed', 'Resolved', 'Duplicate'].includes(b.state)).length,
   };
 
+  // Categories from the Bugs-folder queries (each drill-down → its Bug items)
+  const categories = catRaw.map(c => {
+    const ids = c.rawIds.filter(id => itemMap[id] && itemMap[id].type === 'Bug');
+    return { key: c.key, name: c.name, count: ids.length, ids };
+  });
+
+  // QA / testing User Stories → their child Bugs
+  const qaTestingUS = QA_US_IDS.map(id => {
+    const u = usChildRaw[id];
+    if (!u) return null;
+    const ids = u.childIds.filter(cid => itemMap[cid] && itemMap[cid].type === 'Bug');
+    return { id, title: u.title, state: u.state, url: adoBase + id, count: ids.length, ids };
+  }).filter(Boolean);
+
   progress('Sprint Bug Analysis ready.');
-  return { overallBugs, childBugs, relatedBugs, usLinkedBugs, nonUsBugs, kpis, breakdowns };
+  return { overallBugs, childBugs, relatedBugs, usLinkedBugs, nonUsBugs, kpis, breakdowns,
+    categories, qaTestingUS, bugById: itemMap };
 }
 
 // ── Info Needed Data ──────────────────────────────────────────────────────────

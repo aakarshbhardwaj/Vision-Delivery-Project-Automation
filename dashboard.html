@@ -4284,9 +4284,10 @@ function sbaTableHtml(items, tbodyId) {
   return items.map(sbaBuildRow).join('');
 }
 
-function renderSprintBugAnalysis({ overallBugs, childBugs, relatedBugs, usLinkedBugs, nonUsBugs, kpis, breakdowns }) {
+function renderSprintBugAnalysis({ overallBugs, childBugs, relatedBugs, usLinkedBugs, nonUsBugs, kpis, breakdowns, categories, qaTestingUS, bugById }) {
   const body = document.getElementById('rv-body');
-  window._sba = { overallBugs, childBugs, relatedBugs, usLinkedBugs, nonUsBugs };
+  categories = categories || []; qaTestingUS = qaTestingUS || []; bugById = bugById || {};
+  window._sba = { overallBugs, childBugs, relatedBugs, usLinkedBugs, nonUsBugs, categories, qaTestingUS, bugById };
   window._sbaFilters = { state:'', severity:'', assignee:'' };
 
   // ── KPI strip ──
@@ -4330,11 +4331,8 @@ function renderSprintBugAnalysis({ overallBugs, childBugs, relatedBugs, usLinked
   }
 
   const total = kpis.total || 1;
-  const reasonHtml   = barSection('Why Are Bugs Arising? — Reason Breakdown', breakdowns.byReason,   total, (_, i) => SBA_REASON_PAL[i % SBA_REASON_PAL.length], 'sbaFilterReason');
   const sevHtml      = barSection('Severity Distribution',  breakdowns.bySeverity, total, (lbl) => SBA_SEV_COL[lbl] || '#7a8399', 'sbaFilterSeverity');
   const stateHtml    = barSection('State Distribution',     breakdowns.byState,    total, (_, i) => SBA_REASON_PAL[(i + 3) % SBA_REASON_PAL.length], 'sbaFilterState');
-  const areaHtml     = barSection('Top Affected Areas',     breakdowns.byArea,     total, (_, i) => SBA_REASON_PAL[(i + 1) % SBA_REASON_PAL.length], 'sbaFilterArea');
-  const assigneeHtml = barSection('By Assignee',            breakdowns.byAssignee, total, (_, i) => SBA_REASON_PAL[(i + 5) % SBA_REASON_PAL.length], 'sbaFilterAssignee');
 
   // ── Tags cloud ──
   const tagsHtml = breakdowns.byTags.length ? `
@@ -4353,16 +4351,17 @@ function renderSprintBugAnalysis({ overallBugs, childBugs, relatedBugs, usLinked
   const allAssignees = [...new Set(overallBugs.map(b => b.assignedTo).filter(Boolean))].sort();
 
   const filterBar = `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-    <select id="sba-f-state"    class="in-filter-sel" onchange="sbaApplyFilters()">
+    <select id="sba-f-state"    class="in-filter-sel" onchange="sbaView('state', this.value)">
       <option value="">All States</option>${allStates.map(s => `<option value="${rvEsc(s)}">${rvEsc(s)}</option>`).join('')}
     </select>
-    <select id="sba-f-sev"      class="in-filter-sel" onchange="sbaApplyFilters()">
+    <select id="sba-f-sev"      class="in-filter-sel" onchange="sbaView('severity', this.value)">
       <option value="">All Severities</option>${allSevs.map(s => `<option value="${rvEsc(s)}">${rvEsc(s)}</option>`).join('')}
     </select>
-    <select id="sba-f-assignee" class="in-filter-sel" onchange="sbaApplyFilters()">
+    <select id="sba-f-assignee" class="in-filter-sel" onchange="sbaView('assignee', this.value)">
       <option value="">All Assignees</option>${allAssignees.map(a => `<option value="${rvEsc(a)}">${rvEsc(a)}</option>`).join('')}
     </select>
     <button id="sba-clear-btn" onclick="sbaClearFilters()" style="display:none;background:rgba(255,255,255,.06);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:11px;font-family:var(--font)">✕ Clear</button>
+    <span id="sba-view-label" style="display:none;font-size:11px;font-weight:700;color:#4f8ef7"></span>
     <span id="sba-count" style="font-size:11px;color:var(--muted);margin-left:4px"></span>
   </div>`;
 
@@ -4370,6 +4369,43 @@ function renderSprintBugAnalysis({ overallBugs, childBugs, relatedBugs, usLinked
     <th>ID</th><th>Title</th><th>Source</th><th>State</th><th>Severity</th>
     <th>Assigned To</th><th>Reason</th><th>Tags</th><th>Created</th><th>Latest Comment</th>
   </tr></thead>`;
+
+  // ── Bug Categories (from the Bugs-folder saved queries) — click to drill down ──
+  const SBA_CAT_PAL = ['#4f8ef7','#ef66c3','#20c997','#cc26ff','#f59e0b','#00e1ff','#e05252','#8870e8'];
+  const categoriesHtml = categories.length ? `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px">
+      <div class="sh-bars-title" style="margin-bottom:10px">Bug Categories &nbsp;·&nbsp; <span style="font-weight:400;color:var(--muted)">click a category to drill down</span></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:8px">
+        ${categories.map((c,i) => {
+          const col = SBA_CAT_PAL[i % SBA_CAT_PAL.length];
+          const dim = c.count === 0;
+          return `<div ${dim?'':`onclick="sbaShowCategory('${c.key}')" onmouseover="this.style.background='${col}22'" onmouseout="this.style.background='${col}11'"`}
+            style="border:1px solid ${dim?'var(--border)':col+'55'};border-radius:8px;padding:10px 12px;cursor:${dim?'default':'pointer'};opacity:${dim?.5:1};background:${dim?'transparent':col+'11'}">
+            <div style="font-size:20px;font-weight:700;color:${dim?'var(--muted)':col}">${c.count}</div>
+            <div style="font-size:11px;color:var(--text);margin-top:2px;line-height:1.3">${rvEsc(c.name)}</div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>` : '';
+
+  // ── QA / Testing User Stories → their Child Bugs ──
+  // Only show QA / Testing US that actually have child bugs (hide 0-count rows)
+  const qaUsShown   = qaTestingUS.filter(u => u.count > 0);
+  const totalUsKids = qaUsShown.reduce((s,u)=>s+u.count,0);
+  const qaUsHtml = qaUsShown.length ? `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px">
+      <div class="sh-bars-title" style="margin-bottom:10px">QA / Testing User Stories — Child Bugs (${totalUsKids}) &nbsp;·&nbsp; <span style="font-weight:400;color:var(--muted)">click a story to see its bugs</span></div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${qaUsShown.map(u => `
+          <div onclick="sbaShowUsKids(${u.id})" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''"
+            style="display:flex;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--border);border-radius:7px;cursor:pointer">
+            <a href="${u.url}" target="_blank" class="id-link" onclick="event.stopPropagation()" style="flex:0 0 auto">#${u.id}</a>
+            <span style="flex:1;font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${rvEsc(u.title)}">${rvEsc(u.title)}</span>
+            <span style="flex:0 0 auto;font-size:10px;padding:1px 7px;border-radius:3px;background:rgba(127,127,127,.15);color:var(--muted)">${rvEsc(u.state)}</span>
+            <span style="flex:0 0 auto;font-size:13px;font-weight:700;color:#ef66c3;min-width:28px;text-align:right">${u.count}</span>
+          </div>`).join('')}
+      </div>
+    </div>` : '';
 
   // ── Assemble ──
   body.innerHTML = `<div style="padding:20px;max-width:1500px;margin:0 auto">
@@ -4379,21 +4415,15 @@ function renderSprintBugAnalysis({ overallBugs, childBugs, relatedBugs, usLinked
     </div>
     ${kpiHtml}
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-      ${reasonHtml}
-      <div style="display:flex;flex-direction:column;gap:14px">
-        ${sevHtml}
-        ${stateHtml}
-      </div>
-    </div>
+    <!-- Interactive exploration leads the report -->
+    ${categoriesHtml}
+    ${qaUsHtml}
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-      ${areaHtml}
-      <div style="display:flex;flex-direction:column;gap:14px">
-        ${assigneeHtml}
-        ${tagsHtml}
-      </div>
+      ${sevHtml}
+      ${stateHtml}
     </div>
+    ${tagsHtml ? `<div style="margin-bottom:14px">${tagsHtml}</div>` : ''}
 
     <!-- Tabs -->
     <div style="margin-top:6px">
@@ -4418,118 +4448,74 @@ function renderSprintBugAnalysis({ overallBugs, childBugs, relatedBugs, usLinked
   sbaUpdateCount(overallBugs.length);
 }
 
-window.sbaSetTab = function(tab) {
-  window._sbaActiveTab = tab;
-  window._sbaFilters   = { state:'', severity:'', assignee:'' };
-  ['overall','open','child','related','nonUs','usLinked'].forEach(t => {
-    const el = document.getElementById(`sba-tab-${t}`);
-    if (el) el.classList.toggle('active', t === tab);
-  });
-  // reset dropdowns
-  ['sba-f-state','sba-f-sev','sba-f-assignee'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = '';
-  });
-  const btn = document.getElementById('sba-clear-btn');
-  if (btn) btn.style.display = 'none';
-  const src = { overall:'overallBugs', child:'childBugs', related:'relatedBugs', nonUs:'nonUsBugs', usLinked:'usLinkedBugs' };
-  const items = (window._sba || {})[src[tab]] || [];
-  const tbody = document.getElementById('sba-tbody');
-  if (tbody) tbody.innerHTML = sbaTableHtml(items);
-  sbaUpdateCount(items.length);
-};
-
-window.sbaShowOpen = function() {
-  window._sbaActiveTab = 'open';
-  window._sbaFilters   = { state:'', severity:'', assignee:'' };
-  ['overall','open','child','related','nonUs','usLinked'].forEach(t => {
-    const el = document.getElementById(`sba-tab-${t}`);
-    if (el) el.classList.toggle('active', t === 'open');
-  });
-  ['sba-f-state','sba-f-sev','sba-f-assignee'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = '';
-  });
-  const btn = document.getElementById('sba-clear-btn');
-  if (btn) btn.style.display = 'none';
-  const all = (window._sba || {}).overallBugs || [];
-  const items = all.filter(b => b.state && !b.state.toLowerCase().includes('closed'));
-  const tbody = document.getElementById('sba-tbody');
-  if (tbody) tbody.innerHTML = sbaTableHtml(items);
-  sbaUpdateCount(items.length);
-};
-
-window.sbaApplyFilters = function() {
-  const f = window._sbaFilters || {};
-  const stateEl = document.getElementById('sba-f-state');
-  const sevEl   = document.getElementById('sba-f-sev');
-  const asnEl   = document.getElementById('sba-f-assignee');
-  if (stateEl) f.state    = stateEl.value;
-  if (sevEl)   f.severity = sevEl.value;
-  if (asnEl)   f.assignee = asnEl.value;
-
-  const src  = { overall:'overallBugs', child:'childBugs', related:'relatedBugs', nonUs:'nonUsBugs', usLinked:'usLinkedBugs' };
-  const activeTab = window._sbaActiveTab || 'overall';
-  let base;
-  if (activeTab === 'open') {
-    base = ((window._sba || {}).overallBugs || []).filter(b => b.state && !b.state.toLowerCase().includes('closed'));
-  } else {
-    base = (window._sba || {})[src[activeTab]] || [];
-  }
-  let items  = base;
-  if (f.state)    items = items.filter(i => i.state === f.state);
-  if (f.severity) items = items.filter(i => i.severity === f.severity);
-  if (f.assignee) items = items.filter(i => i.assignedTo === f.assignee);
-
-  const isFiltered = f.state || f.severity || f.assignee;
-  const btn = document.getElementById('sba-clear-btn');
-  if (btn) btn.style.display = isFiltered ? '' : 'none';
-  const tbody = document.getElementById('sba-tbody');
-  if (tbody) tbody.innerHTML = sbaTableHtml(items);
-  sbaUpdateCount(items.length);
-};
-
-window.sbaClearFilters = function() {
-  window._sbaFilters = { state:'', severity:'', assignee:'' };
-  ['sba-f-state','sba-f-sev','sba-f-assignee'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.value = '';
-  });
-  sbaApplyFilters();
-};
-
+// ── Unified single-filter model ──────────────────────────────────────────────
+// Every filter entry point (tabs, KPIs, Bug Categories, QA US, Severity/State
+// bars, Tags, and the table dropdowns) routes through sbaView. Exactly ONE
+// filter is active at a time — selecting any one resets all others. No
+// concatenation of filters anywhere.
 function sbaUpdateCount(n) {
   const el = document.getElementById('sba-count');
   if (el) el.textContent = `${n} item${n !== 1 ? 's' : ''}`;
 }
 
-function sbaSetFilter(field, val) {
-  window._sbaFilters = window._sbaFilters || {};
-  window._sbaFilters[field] = val;
-  const elMap = { state:'sba-f-state', severity:'sba-f-sev', assignee:'sba-f-assignee' };
-  const el = document.getElementById(elMap[field]);
-  if (el) el.value = val;
-  sbaApplyFilters();
-}
+window.sbaView = function(kind, value) {
+  const sba = window._sba || {};
+  const overall = sba.overallBugs || [];
+  let items = [], label = '';
+  switch (kind) {
+    case 'all':      items = overall; break;
+    case 'open':     items = overall.filter(b => b.state && !b.state.toLowerCase().includes('closed')); break;
+    case 'child':    items = sba.childBugs    || []; break;
+    case 'related':  items = sba.relatedBugs  || []; break;
+    case 'nonUs':    items = sba.nonUsBugs    || []; break;
+    case 'usLinked': items = sba.usLinkedBugs || []; break;
+    case 'category': { const c = (sba.categories||[]).find(x => x.key === value);
+                       items = c ? c.ids.map(i => sba.bugById[i]).filter(Boolean) : []; label = 'Category: ' + (c ? c.name : value); break; }
+    case 'us':       { const u = (sba.qaTestingUS||[]).find(x => String(x.id) === String(value));
+                       items = u ? u.ids.map(i => sba.bugById[i]).filter(Boolean) : []; label = 'Child bugs of US #' + value; break; }
+    case 'severity': if (!value) return sbaView('all'); items = overall.filter(b => b.severity === value);   label = 'Severity: ' + value; break;
+    case 'state':    if (!value) return sbaView('all'); items = overall.filter(b => b.state === value);      label = 'State: ' + value; break;
+    case 'assignee': if (!value) return sbaView('all'); items = overall.filter(b => b.assignedTo === value); label = 'Assignee: ' + value; break;
+    case 'tag':      items = overall.filter(b => (b.tags||[]).includes(value)); label = 'Tag: ' + value; break;
+    default:         items = overall;
+  }
 
-window.sbaFilterReason   = val => { window._sbaActiveTab = window._sbaActiveTab || 'overall'; sbaSetFilter('state', ''); /* reason not a dropdown — filter inline */ sbaFilterByProp('reason',   val); };
-window.sbaFilterSeverity = val => { window._sbaActiveTab = window._sbaActiveTab || 'overall'; sbaSetFilter('severity', val); };
-window.sbaFilterState    = val => { window._sbaActiveTab = window._sbaActiveTab || 'overall'; sbaSetFilter('state',    val); };
-window.sbaFilterAssignee = val => { window._sbaActiveTab = window._sbaActiveTab || 'overall'; sbaSetFilter('assignee', val); };
-window.sbaFilterArea     = val => { window._sbaActiveTab = window._sbaActiveTab || 'overall'; sbaFilterByProp('areaPath', val, true); };
-window.sbaFilterTag      = val => { window._sbaActiveTab = window._sbaActiveTab || 'overall'; sbaFilterByProp('tags', val); };
-
-function sbaFilterByProp(prop, val, partial) {
-  const src   = { overall:'overallBugs', child:'childBugs', related:'relatedBugs', nonUs:'nonUsBugs' };
-  const base  = (window._sba || {})[src[window._sbaActiveTab || 'overall']] || [];
-  const items = base.filter(i => {
-    const v = i[prop];
-    if (Array.isArray(v)) return v.includes(val);
-    return partial ? (v || '').includes(val) : v === val;
+  const TAB = { all:'overall', open:'open', child:'child', related:'related', nonUs:'nonUs', usLinked:'usLinked' };
+  const tabKey = TAB[kind] || null;
+  // Highlight the matching tab (none for property/category/US filters)
+  ['overall','open','child','related','nonUs','usLinked'].forEach(t => {
+    const el = document.getElementById('sba-tab-' + t); if (el) el.classList.toggle('active', t === tabKey);
   });
+  // Sync dropdowns — keep the one this filter came from, clear the rest
+  const dd = { state:'sba-f-state', severity:'sba-f-sev', assignee:'sba-f-assignee' };
+  Object.entries(dd).forEach(([f, id]) => { const el = document.getElementById(id); if (el) el.value = (f === kind ? value : ''); });
+  // View label only for non-tab selections
+  const vl = document.getElementById('sba-view-label');
+  if (vl) { if (tabKey) { vl.style.display = 'none'; } else { vl.textContent = `${label} (${items.length})`; vl.style.display = ''; } }
+  const clr = document.getElementById('sba-clear-btn');
+  if (clr) clr.style.display = (kind === 'all') ? 'none' : '';
+
+  window._sbaActiveTab = tabKey || 'dynamic';
+  window._sbaDynBase   = items;
   const tbody = document.getElementById('sba-tbody');
   if (tbody) tbody.innerHTML = sbaTableHtml(items);
   sbaUpdateCount(items.length);
-  const btn = document.getElementById('sba-clear-btn');
-  if (btn) btn.style.display = '';
-}
+  document.querySelector('.sba-tab-body')?.scrollIntoView({ behavior:'smooth', block:'nearest' });
+};
+
+// Thin wrappers so existing HTML wiring keeps working — all delegate to sbaView
+window.sbaSetTab       = tab => sbaView({ overall:'all', open:'open', child:'child', related:'related', nonUs:'nonUs', usLinked:'usLinked' }[tab] || 'all');
+window.sbaShowOpen     = ()  => sbaView('open');
+window.sbaShowCategory = key => sbaView('category', key);
+window.sbaShowUsKids   = id  => sbaView('us', id);
+window.sbaFilterSeverity = val => sbaView('severity', val);
+window.sbaFilterState    = val => sbaView('state', val);
+window.sbaFilterAssignee = val => sbaView('assignee', val);
+window.sbaFilterTag      = val => sbaView('tag', val);
+window.sbaFilterReason   = () => {};   // Reason breakdown card removed
+window.sbaFilterArea     = () => {};   // Top Affected Areas card removed
+window.sbaApplyFilters   = () => {};   // dropdowns call sbaView directly now
+window.sbaClearFilters   = () => sbaView('all');
 
 // ── Info Needed Report ───────────────────────────────────────────────────────
 
