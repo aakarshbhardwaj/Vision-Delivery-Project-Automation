@@ -4035,7 +4035,7 @@ function shShowDrill(title, items) {
 
   const TYPE_CLASS  = { 'Bug': 'sh-type-bug', 'Task': 'sh-type-task' };
   const hasComments = items.some(i => i.latestComment);
-  const colSpan     = hasComments ? 9 : 8;
+  const colSpan     = hasComments ? 10 : 9;
   const _fmtDate = iso => {
     if (!iso) return '—';
     const d = new Date(iso);
@@ -4069,6 +4069,7 @@ function shShowDrill(title, items) {
           <td style="padding:6px 12px;font-size:11px;color:${sch}">${rvEsc(item.state)}</td>
           <td style="padding:6px 12px;font-size:11px;color:var(--muted)">${rvEsc(item.priorityLabel)}</td>
           <td style="padding:6px 12px;font-size:11px;color:var(--muted);white-space:nowrap">${rvEsc(item.assignedTo || '—')}</td>
+          <td style="padding:6px 12px;font-size:11px;color:var(--muted);white-space:nowrap">${rvEsc(item.initiator || '—')}</td>
           <td style="padding:6px 12px;font-size:11px;color:var(--text);white-space:nowrap">${_fmtDate(item.cloudDeliveryDate)}</td>
           <td style="padding:6px 12px;font-size:11px;color:var(--text);white-space:nowrap">${_fmtDate(item.mobileDeliveryDate)}</td>
           ${commentCell}
@@ -4123,6 +4124,7 @@ function shShowDrill(title, items) {
             <th style="padding:7px 12px;color:var(--muted);text-align:left;min-width:90px">State</th>
             <th style="padding:7px 12px;color:var(--muted);text-align:left;min-width:100px">Severity</th>
             <th style="padding:7px 12px;color:var(--muted);text-align:left;min-width:120px">Assigned To</th>
+            <th style="padding:7px 12px;color:var(--muted);text-align:left;min-width:120px">Initiator</th>
             <th style="padding:7px 12px;color:var(--muted);text-align:left;min-width:120px">Actual Cloud/Portal Date</th>
             <th style="padding:7px 12px;color:var(--muted);text-align:left;min-width:120px">Actual Mobile Date</th>
             ${commentHeader}

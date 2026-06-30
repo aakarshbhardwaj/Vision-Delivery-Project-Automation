@@ -2066,6 +2066,7 @@ async function fetchSprintHealthData(config, progress) {
     'System.CreatedDate', 'System.ChangedDate',
     'Custom.ActualCloudorPortalDeliveryDate',
     'Custom.ActualMobileDeliveryDate',
+    'Custom.Initiator',
   ];
   const rawItems = await batchFetch(config, baseApi, allIds, FIELDS);
   progress('Building sprint health matrix…');
@@ -2094,6 +2095,7 @@ async function fetchSprintHealthData(config, progress) {
       changedDate:           f('System.ChangedDate') || '',
       cloudDeliveryDate:     f('Custom.ActualCloudorPortalDeliveryDate') || '',
       mobileDeliveryDate:    f('Custom.ActualMobileDeliveryDate') || '',
+      initiator:             cleanName(f('Custom.Initiator')) || '',
     };
   });
 
