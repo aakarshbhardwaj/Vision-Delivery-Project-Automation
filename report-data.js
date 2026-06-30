@@ -9,6 +9,38 @@ const https = require('https');
 
 // ── Core HTTP helpers ────────────────────────────────────────────────────────
 
+function claudeFetch(apiKey, systemPrompt, userContent) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userContent }],
+    });
+    const opts = {
+      hostname: 'api.anthropic.com', port: 443,
+      path: '/v1/messages', method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(payload),
+      },
+    };
+    const req = https.request(opts, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        if (res.statusCode >= 400) return reject(new Error(`Claude API ${res.statusCode}: ${d.slice(0,300)}`));
+        try { resolve(JSON.parse(d)); } catch (e) { reject(new Error(d.slice(0,200))); }
+      });
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 function adoFetch(config, urlStr, body) {
   return new Promise((resolve, reject) => {
     const token = Buffer.from(`:${config.pat}`).toString('base64');
@@ -1270,8 +1302,12 @@ async function getIRRoster(config, sprintNum) {
 
 const IOT_TEAM_NAME = 'IoT-Global';
 
+// Static fallback roster — used only if the IoT capacity board returns nothing
+// (e.g. ADO down). The live roster is derived from the capacity board each sprint
+// via IOT_ACTIVITY_TO_TEAM + buildIoTRoster, mirroring the IR Daily Team Activity
+// report — so membership auto-tracks the board and never goes stale.
 const IOT_RESOURCE_TEAMS = {
-  'Development-Mobile': ['Bhanu Teja Karri', 'Krunal Shah', 'Nikita Malik', 'Piyush Kumar'],
+  'Development-Mobile': ['Bhanu Teja Karri', 'Krunal Shah', 'Piyush Kumar'],
   'Development-Web':    ['Srinivasan GR', 'Yogendra Babu'],
   'Testing Mobile':     ['Akash Panchal', 'Kartik Gevariya', 'Mona Jani'],
   'Testing':            ['Himanshu Dixit'],
@@ -1296,6 +1332,44 @@ function matchIoTMember(displayName) {
 
 const IOT_DEV_TEAMS = new Set(['Development-Mobile', 'Development-Web']);
 const IOT_QA_TEAMS  = new Set(['Testing Mobile', 'Testing']);
+
+// ADO capacity-board "Activity" → dashboard team label (IoT). The IoT board's
+// Activity names are identical to the team labels, so this is an identity map.
+// It is the source of truth for the IoT Daily Team Activity roster: when a sprint
+// transitions, membership auto-updates from whoever is planned on the new sprint's
+// capacity board — no code change needed each sprint.
+const IOT_ACTIVITY_TO_TEAM = {
+  'Development-Mobile': 'Development-Mobile',
+  'Development-Web':    'Development-Web',
+  'Testing Mobile':     'Testing Mobile',
+  'Testing':            'Testing',
+};
+const IOT_TEAM_ORDER = ['Development-Mobile', 'Development-Web', 'Testing Mobile', 'Testing'];
+
+// Build a { resourceTeams, match } pair from a capacity result's `resourceTeams`
+// (produced by fetchCapacity(..., { activityMap: IOT_ACTIVITY_TO_TEAM })). Ordered
+// by IOT_TEAM_ORDER. Falls back to the static IOT_RESOURCE_TEAMS / matchIoTMember
+// if the capacity board returned nothing — so the report degrades gracefully.
+function buildIoTRoster(capData) {
+  if (capData && capData.resourceTeams && Object.keys(capData.resourceTeams).length) {
+    const raw = capData.resourceTeams;
+    const resourceTeams = {};
+    for (const t of IOT_TEAM_ORDER)   if (raw[t] && raw[t].length)                      resourceTeams[t] = raw[t];
+    for (const t of Object.keys(raw)) if (!resourceTeams[t] && raw[t] && raw[t].length) resourceTeams[t] = raw[t];
+    const mm = {};
+    for (const [team, mems] of Object.entries(resourceTeams))
+      for (const nm of mems) mm[nm.toLowerCase()] = { canonical: nm, team };
+    const match = (dn) => {
+      if (!dn) return null;
+      const l = dn.toLowerCase();
+      if (mm[l]) return mm[l];
+      for (const [k, v] of Object.entries(mm)) if (l.includes(k) || k.includes(l)) return v;
+      return null;
+    };
+    return { resourceTeams, match };
+  }
+  return { resourceTeams: IOT_RESOURCE_TEAMS, match: matchIoTMember };
+}
 
 async function fetchDailyActivityData(config, progress, params) {
   const isAll = (params && params.date) === 'all';
@@ -1671,9 +1745,14 @@ async function fetchIoTDailyActivityData(config, progress, params) {
   const iotConfig = { ...config, team: IOT_TEAM_NAME, sprint: iotSprintPath };
 
   progress('Loading IoT sprint capacity…');
-  const capData = await fetchCapacity(iotConfig, matchIoTMember);
+  const capData = await fetchCapacity(iotConfig, null, { activityMap: IOT_ACTIVITY_TO_TEAM });
   const sprintStart = capData?.sprintStart ? _fmt(new Date(capData.sprintStart)) : null;
   const sprintEnd   = capData?.sprintEnd   ? _fmt(new Date(capData.sprintEnd))   : null;
+
+  // ── Dynamic team roster from the capacity board ───────────────────────
+  // Membership is whoever is planned on this sprint's IoT capacity board, grouped
+  // by their Activity. Auto-updates on sprint transitions (see buildIoTRoster).
+  const { resourceTeams: IOT_TEAMS, match: matchIoT } = buildIoTRoster(capData);
 
   progress('Fetching IoT sprint Tasks and Bugs…');
   const wiqlResp = await adoFetch(config, `${baseApi}/wit/wiql?api-version=7.1`, {
@@ -1724,7 +1803,7 @@ async function fetchIoTDailyActivityData(config, progress, params) {
                   .map(fn => cleanName(fld(raw, fn))).filter(Boolean);
                 if (!fixedByNames.length) {
                   const asgn = cleanName(fld(raw, 'System.AssignedTo'));
-                  const am = asgn && matchIoTMember(asgn);
+                  const am = asgn && matchIoT(asgn);
                   if (am && IOT_DEV_TEAMS.has(am.team)) fixedByNames = [am.canonical];
                 }
                 if (fixedByNames.length) {
@@ -1755,7 +1834,7 @@ async function fetchIoTDailyActivityData(config, progress, params) {
 
   // Build team groups
   const teamGroups = {};
-  for (const [team, members] of Object.entries(IOT_RESOURCE_TEAMS)) {
+  for (const [team, members] of Object.entries(IOT_TEAMS)) {
     const mData = {};
     for (const m of members) {
       const cap = capData?.memberCapacity?.[m] || {};
@@ -1798,7 +1877,7 @@ async function fetchIoTDailyActivityData(config, progress, params) {
 
     if (type === 'Task') {
       const assigned = cleanName(fld(raw, 'System.AssignedTo'));
-      const match    = matchIoTMember(assigned);
+      const match    = matchIoT(assigned);
       if (!match) continue;
       const remHrs  = Number(fld(raw, 'Microsoft.VSTS.Scheduling.RemainingWork')) ?? 0;
       const sprintComp = Number(fld(raw, 'Microsoft.VSTS.Scheduling.CompletedWork')) || 0;
@@ -1822,12 +1901,12 @@ async function fetchIoTDailyActivityData(config, progress, params) {
           .map(f => cleanName(fld(raw, f))).filter(Boolean);
         if (!devNames.length) {
           const asgn = cleanName(fld(raw, 'System.AssignedTo'));
-          const am = asgn && matchIoTMember(asgn);
+          const am = asgn && matchIoT(asgn);
           if (am && IOT_DEV_TEAMS.has(am.team)) devNames = [am.canonical];
         }
         const div = devNames.length || 1;
         for (const dn of devNames) {
-          const m = matchIoTMember(dn);
+          const m = matchIoT(dn);
           if (!m || !IOT_DEV_TEAMS.has(m.team)) continue;
           const share = +(devComp / div).toFixed(2);
           const remShare = +(devRem / div).toFixed(2);
@@ -1840,7 +1919,7 @@ async function fetchIoTDailyActivityData(config, progress, params) {
         const qaRem  = Number(fld(raw, BUG_F.qaRem))  || 0;
         const qaName = cleanName(fld(raw, BUG_F.verifiedQA));
         if (qaName) {
-          const m = matchIoTMember(qaName);
+          const m = matchIoT(qaName);
           if (m && IOT_QA_TEAMS.has(m.team)) {
             const md = ensureMember(m.team, m.canonical);
             md.bugComp += qaComp; md.bugRem += qaRem;
@@ -1856,14 +1935,14 @@ async function fetchIoTDailyActivityData(config, progress, params) {
         const bugDevSprintComp = Number(fld(raw, BUG_F.devComp)) || 0;
         const bugQaSprintComp  = Number(fld(raw, BUG_F.qaComp))  || 0;
         for (const [who, delta] of Object.entries(dm.devContribs)) {
-          const m = matchIoTMember(who);
+          const m = matchIoT(who);
           if (!m || !IOT_DEV_TEAMS.has(m.team)) continue;
           const md = ensureMember(m.team, m.canonical);
           md.bugComp += delta; md.bugRem += devRem; md.hasActivity = true;
           md.bugItems.push({ id, title, state, url, compDelta: delta, remHrs: devRem, role: 'DEV', active: true, sprintComp: bugDevSprintComp });
         }
         for (const [who, delta] of Object.entries(dm.qaContribs)) {
-          const m = matchIoTMember(who);
+          const m = matchIoT(who);
           if (!m || !IOT_QA_TEAMS.has(m.team)) continue;
           const md = ensureMember(m.team, m.canonical);
           md.bugComp += delta; md.bugRem += qaRem; md.hasActivity = true;
@@ -1879,7 +1958,7 @@ async function fetchIoTDailyActivityData(config, progress, params) {
       if ((fld(raw, 'System.WorkItemType') || '') !== 'Task') continue;
       const id = raw.id;
       const assigned = cleanName(fld(raw, 'System.AssignedTo'));
-      const match = matchIoTMember(assigned);
+      const match = matchIoT(assigned);
       if (!match) continue;
       const md = teamGroups[match.team]?.members[match.canonical];
       if (!md || md.taskItems.some(i => i.id === id)) continue;
@@ -1904,7 +1983,7 @@ async function fetchIoTDailyActivityData(config, progress, params) {
           .map(fn => cleanName(fld(raw, fn))).filter(Boolean);
         const div = devNames.length || 1;
         for (const dn of devNames) {
-          const m = matchIoTMember(dn);
+          const m = matchIoT(dn);
           if (!m || !IOT_DEV_TEAMS.has(m.team)) continue;
           const md = teamGroups[m.team]?.members[m.canonical];
           if (!md || md.bugItems.some(i => i.id === id)) continue;
@@ -1915,7 +1994,7 @@ async function fetchIoTDailyActivityData(config, progress, params) {
       if (qaComp > 0) {
         const qaName = cleanName(fld(raw, BUG_F.verifiedQA));
         if (!qaName) continue;
-        const m = matchIoTMember(qaName);
+        const m = matchIoT(qaName);
         if (!m || !IOT_QA_TEAMS.has(m.team)) continue;
         const md = teamGroups[m.team]?.members[m.canonical];
         if (!md || md.bugItems.some(i => i.id === id)) continue;
@@ -1926,7 +2005,7 @@ async function fetchIoTDailyActivityData(config, progress, params) {
 
   // Team summaries
   let totalInactive = 0;
-  const teamOrder = Object.keys(IOT_RESOURCE_TEAMS);
+  const teamOrder = Object.keys(IOT_TEAMS);
   for (const team of teamOrder) {
     const tg = teamGroups[team];
     if (!tg) continue;
@@ -2826,6 +2905,7 @@ async function fetchSupportTicketsData(config, progress) {
     'Microsoft.VSTS.Scheduling.RemainingWork',
     'Microsoft.VSTS.Scheduling.OriginalEstimate',
     'Microsoft.VSTS.Scheduling.CompletedWork',
+    BUG_F.fixedDev1, BUG_F.verifiedQA, BUG_F.devComp, BUG_F.qaComp,
   ];
   const rawItems = await batchFetch(config, baseApi, ids, fields);
 
@@ -2849,18 +2929,319 @@ async function fetchSupportTicketsData(config, progress) {
       remH:        +(Number(fld(raw, 'Microsoft.VSTS.Scheduling.RemainingWork'))   || 0).toFixed(1),
       origH:       +(Number(fld(raw, 'Microsoft.VSTS.Scheduling.OriginalEstimate'))|| 0).toFixed(1),
       compH:       +(Number(fld(raw, 'Microsoft.VSTS.Scheduling.CompletedWork'))   || 0).toFixed(1),
+      fixedByDev1: cleanName(fld(raw, BUG_F.fixedDev1)) || '',
+      verifiedByQA:cleanName(fld(raw, BUG_F.verifiedQA)) || '',
+      devCompH:    +(Number(fld(raw, BUG_F.devComp)) || 0).toFixed(1),
+      qaCompH:     +(Number(fld(raw, BUG_F.qaComp))  || 0).toFixed(1),
     };
   });
 
   const byState = {}, byType = {}, byAssignee = {};
+  let totalDevComp = 0, totalQaComp = 0;
   for (const t of tickets) {
     byState[t.state]      = (byState[t.state]      || 0) + 1;
     byType[t.type]        = (byType[t.type]        || 0) + 1;
     byAssignee[t.assignedTo] = (byAssignee[t.assignedTo] || 0) + 1;
+    totalDevComp += t.devCompH;
+    totalQaComp  += t.qaCompH;
   }
 
   progress('Support tickets data ready.');
-  return { tickets, totals: { total: tickets.length, byState, byType, byAssignee }, queryName };
+  return { tickets, totals: { total: tickets.length, byState, byType, byAssignee,
+    totalDevComp: +totalDevComp.toFixed(1), totalQaComp: +totalQaComp.toFixed(1) }, queryName };
 }
 
-module.exports = { resolveActiveSprintNum, fetchOnHoldData, fetchResourceHoursData, fetchThreeWayData, fetchChildBugsData, fetchDatabaseEffortData, fetchDevQaEffortData, fetchDailyActivityData, fetchIoTDailyActivityData, fetchSprintHealthData, fetchInfoNeededData, fetchSprintBugAnalysisData, fetchMemberCapacityReport, fetchSprintList, fetchUpcomingSprintData, fetchSupportTicketsData };
+// ── IoT Global Upcoming Release ───────────────────────────────────────────────
+const IOT_UPCOMING_RELEASE_QUERY_ID = '40e02fac-10c6-4478-855c-1e53179c9b5a';
+const IOT_CLOUD_RELEASE_QUERY_ID    = 'ff33482b-d8a3-4af9-86cf-2713db2b7575';
+
+function stripHtml(html) {
+  return (html || '')
+    .replace(/<a[^>]*data-vss-mention[^>]*>.*?<\/a>/gi, '')  // remove ADO @mention tags entirely
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/@\S+/g, '')            // strip any remaining @mention tokens
+    .replace(/\s{2,}/g, ' ').trim();
+}
+
+// Map common gerunds to past tense for release note language
+const GERUND_TO_PAST = {
+  'identifying':'identified','compiling':'compiled','documenting':'documented',
+  'implementing':'implemented','fixing':'fixed','testing':'tested','adding':'added',
+  'updating':'updated','creating':'created','building':'built','resolving':'resolved',
+  'removing':'removed','enhancing':'enhanced','integrating':'integrated',
+  'developing':'developed','improving':'improved','supporting':'supported',
+  'enabling':'enabled','handling':'handled','providing':'provided',
+  'validating':'validated','checking':'checked','verifying':'verified',
+  'syncing':'synced','scanning':'scanned','loading':'loaded','saving':'saved',
+  'displaying':'displayed','migrating':'migrated','refactoring':'refactored',
+  'optimizing':'optimized','replacing':'replaced','upgrading':'upgraded',
+  'configuring':'configured','registering':'registered','connecting':'connected',
+};
+
+function gerundToPast(word) {
+  const lc = word.toLowerCase();
+  if (GERUND_TO_PAST[lc]) return GERUND_TO_PAST[lc];
+  if (!lc.endsWith('ing') || lc.length < 5) return word;
+  const stem = lc.slice(0, -3);
+  return stem.endsWith('e') ? stem + 'd' : stem + 'ed';
+}
+
+// Rewrites internal ADO planning text into customer-facing release note style.
+function toReleaseDesc(rawDesc, title, type) {
+  if (!rawDesc || rawDesc.trim().length < 5) return title;
+
+  const t = rawDesc.trim();
+  const isBug = /bug/i.test(type);
+
+  // ── Pattern 1: "We want [object] to [verb]..." ─────────────────────────────
+  // Finds the "to <word>" that follows and keeps everything from there
+  // e.g. "We want the App to verify whether..." → "To verify whether..."
+  const wantObjTo = t.match(/^we\s+want\s+[\w\s]{1,50}?\s+(to\s+\w)/i);
+  if (wantObjTo) {
+    const idx = t.toLowerCase().indexOf(wantObjTo[1].toLowerCase());
+    if (idx > 4) {
+      const rest = t.slice(idx);
+      const capped = rest.charAt(0).toUpperCase() + rest.slice(1);
+      if (isBug) return `We have resolved an issue where ${capped.charAt(0).toLowerCase() + capped.slice(1)}`;
+      return capped; // "To verify whether a device is working properly..."
+    }
+  }
+
+  // ── Pattern 2: Strip explicit internal openers, rewrite remainder ──────────
+  const openers = [
+    /^title\s*:\s*/i,                                                       // "Title: Enhance..."
+    /^we\s+want\s+to\s+/i,
+    /^we\s+need\s+to\s+/i,
+    /^we\s+would\s+like\s+to\s+/i,
+    /^we\s+plan\s+to\s+/i,
+    /^we\s+intend\s+to\s+/i,
+    /^we\s+are\s+going\s+to\s+/i,
+    /^this\s+task\s+requires?\s+/i,
+    /^this\s+task\s+needs?\s+/i,
+    /^this\s+task\s+is\s+(to\s+|about\s+)?/i,
+    /^this\s+task\s+involves?\s+/i,
+    /^this\s+(story|feature|item|bug|issue|enhancement|change|update)\s+requires?\s+/i,
+    /^this\s+(story|feature|item|bug|issue|enhancement|change|update)\s+needs?\s+/i,
+    /^the\s+purpose\s+of\s+this\s+\w+\s+is\s+(to\s+)?/i,
+    /^in\s+order\s+to\s+/i,
+    /^as\s+a\s+[\w\s]+\s+i\s+want\s+(?:the?\s+\w+\s+)?to\s+/i,           // "As a user I want the APP to..."
+    /^as\s+a\s+[\w\s]+,\s*i\s+want\s+(?:the?\s+\w+\s+)?to\s+/i,          // "As a user, I want the app to..."
+    /^as\s+a\s+[\w\s]+,?\s*i\s+want\s+/i,
+    /^[\w\s]+user\s+story[\s:]+as\s+a\s+[\w\s]+,?\s*i\s+want\s+/i,        // "... User Story As a user, I want..."
+  ];
+
+  let stripped = t;
+  let openerFound = false;
+  for (const rx of openers) {
+    const cleaned = t.replace(rx, '').trim();
+    if (cleaned.length >= 10 && cleaned !== t) {
+      stripped = cleaned;
+      openerFound = true;
+      break;
+    }
+  }
+
+  if (!openerFound) return t; // no internal opener found — show as-is
+
+  // Capitalize first letter
+  stripped = stripped.charAt(0).toUpperCase() + stripped.slice(1);
+  // Strip trailing punctuation from first word before checking gerund
+  const firstWordRaw = stripped.split(/\s+/)[0];
+  const firstWord    = firstWordRaw.replace(/[^a-zA-Z]/g, '');
+
+  if (isBug) {
+    return `We have resolved an issue where ${stripped.charAt(0).toLowerCase() + stripped.slice(1)}`;
+  }
+
+  // If first word is a gerund → convert to past tense: "identifying,..." → "We have identified,..."
+  if (/^[a-z]+ing$/i.test(firstWord) && firstWord.length > 4) {
+    const past = gerundToPast(firstWord.toLowerCase());
+    // Preserve the capitalisation pattern and any trailing punctuation from original word
+    const pastCapped = past.charAt(0).toUpperCase() + past.slice(1);
+    const rest = stripped.slice(firstWord.length); // slice from alphabetic end, preserves comma/punct after word
+    return `We have ${pastCapped}${rest}`;
+  }
+
+  // Default: prepend "We have implemented"
+  return `We have implemented ${stripped.charAt(0).toLowerCase() + stripped.slice(1)}`;
+}
+
+async function fetchIoTUpcomingReleaseData(config, progress) {
+  const baseApi = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_apis`;
+  const adoBase = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_workitems/edit/`;
+
+  progress('Executing IoT Upcoming Release query…');
+  const wiqlResult = await adoFetch(config, `${baseApi}/wit/wiql/${IOT_UPCOMING_RELEASE_QUERY_ID}?api-version=7.1`);
+  const ids = (wiqlResult.workItems || wiqlResult.workItemRelations || [])
+    .map(w => w.target ? w.target.id : w.id).filter(Boolean);
+
+  progress(`Found ${ids.length} items. Fetching details…`);
+  if (!ids.length) return { userStories: [], bugs: [], total: 0 };
+
+  const fields = [
+    'System.Id', 'System.Title', 'System.WorkItemType', 'System.State',
+    'System.Description', 'Microsoft.VSTS.TCM.ReproSteps',
+    'Custom.Platform',
+  ];
+  const rawItems = await batchFetch(config, baseApi, ids, fields);
+
+  const userStories = [], bugs = [];
+  for (const raw of rawItems) {
+    const id   = fld(raw, 'System.Id');
+    const type = fld(raw, 'System.WorkItemType') || '';
+    const title = fld(raw, 'System.Title') || '';
+    const descHtml = fld(raw, 'System.Description') || fld(raw, 'Microsoft.VSTS.TCM.ReproSteps') || '';
+    const rawDesc = stripHtml(descHtml);
+    const item = {
+      id,
+      url:      `${adoBase}${id}`,
+      ref:      `#-${id}-${title}`,
+      title,
+      type,
+      state:    fld(raw, 'System.State') || '',
+      desc:     toReleaseDesc(rawDesc, title, type),
+      platform: fld(raw, 'Custom.Platform') || '',
+    };
+    if (type === 'Bug') bugs.push(item);
+    else userStories.push(item);
+  }
+
+  // ── AI-generated customer-facing descriptions ─────────────────────────────
+  const allItems = [...userStories, ...bugs];
+  if (config.claudeKey && allItems.length) {
+    progress('Generating customer-facing release descriptions…');
+    const systemPrompt = `You are writing official release notes for end customers of an IoT-based retail platform used in stores worldwide.
+
+For each work item write exactly 2–3 sentences using these rules without exception:
+
+STYLE — always use first-person plural ("We have..."):
+- User Story / Enhancement / Feature → "We have implemented [what was built]. [One sentence on the benefit to the customer]."
+- Bug Fix → "We have resolved an issue where [what the customer experienced]. [Confirmation that it is now fixed]."
+
+FORBIDDEN openers — never use these or similar:
+"We want", "We need", "We would like", "We plan", "This task", "This story", "This feature requires", "This bug", "The team", "In order to", "As a user", "This work item", "This change".
+
+ALWAYS:
+- Ignore all person names, @mentions, and assignee references in the raw description — do not include them.
+- No technical jargon, no sprint numbers, no ADO IDs, no internal terminology.
+- Suitable for direct inclusion in a customer release email or changelog.
+
+Respond ONLY with a valid JSON array, no markdown, no extra text:
+[{"id": <numeric id>, "desc": "<release note text>"}]`;
+
+    const input = JSON.stringify(allItems.map(it => ({
+      id: it.id,
+      type: it.type,
+      title: it.title,
+      rawDesc: it.desc.slice(0, 600),
+    })));
+
+    try {
+      const resp = await claudeFetch(config.claudeKey, systemPrompt, input);
+      const text = (resp.content?.[0]?.text || '').trim();
+      const match = text.match(/\[[\s\S]*\]/);
+      if (match) {
+        const descMap = {};
+        JSON.parse(match[0]).forEach(d => { if (d.id && d.desc) descMap[d.id] = d.desc; });
+        allItems.forEach(it => { if (descMap[it.id]) it.desc = descMap[it.id]; });
+      }
+    } catch (e) {
+      console.error('[IoT Upcoming Release] Claude description error:', e.message);
+    }
+  }
+
+  progress('IoT Upcoming Release data ready.');
+  return { userStories, bugs, total: ids.length, sprintNum: resolveActiveSprintNum() };
+}
+
+// ── IoT Global Cloud Release ──────────────────────────────────────────────────
+async function fetchIoTCloudReleaseData(config, progress) {
+  const baseApi = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_apis`;
+  const adoBase = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_workitems/edit/`;
+
+  progress('Executing IoT Cloud Release query…');
+  const wiqlResult = await adoFetch(config, `${baseApi}/wit/wiql/${IOT_CLOUD_RELEASE_QUERY_ID}?api-version=7.1`);
+  const ids = (wiqlResult.workItems || wiqlResult.workItemRelations || [])
+    .map(w => w.target ? w.target.id : w.id).filter(Boolean);
+
+  progress(`Found ${ids.length} items. Fetching details…`);
+  if (!ids.length) return { userStories: [], bugs: [], total: 0, sprintNum: resolveActiveSprintNum() };
+
+  const fields = [
+    'System.Id', 'System.Title', 'System.WorkItemType', 'System.State',
+    'System.Description', 'Microsoft.VSTS.TCM.ReproSteps',
+    'Custom.Platform',
+  ];
+  const rawItems = await batchFetch(config, baseApi, ids, fields);
+
+  const userStories = [], bugs = [];
+  for (const raw of rawItems) {
+    const id       = fld(raw, 'System.Id');
+    const type     = fld(raw, 'System.WorkItemType') || '';
+    const title    = fld(raw, 'System.Title') || '';
+    const descHtml = fld(raw, 'System.Description') || fld(raw, 'Microsoft.VSTS.TCM.ReproSteps') || '';
+    const rawDesc  = stripHtml(descHtml);
+    const item = {
+      id,
+      url:      `${adoBase}${id}`,
+      ref:      `#-${id}-${title}`,
+      title,
+      type,
+      state:    fld(raw, 'System.State') || '',
+      desc:     toReleaseDesc(rawDesc, title, type),
+      platform: fld(raw, 'Custom.Platform') || '',
+    };
+    if (type === 'Bug') bugs.push(item);
+    else userStories.push(item);
+  }
+
+  // ── AI-generated customer-facing descriptions ─────────────────────────────
+  const allItems = [...userStories, ...bugs];
+  if (config.claudeKey && allItems.length) {
+    progress('Generating customer-facing release descriptions…');
+    const systemPrompt = `You are writing official release notes for end customers of an IoT-based retail platform used in stores worldwide.
+
+For each work item write exactly 2–3 sentences using these rules without exception:
+
+STYLE — always use first-person plural ("We have..."):
+- User Story / Enhancement / Feature → "We have implemented [what was built]. [One sentence on the benefit to the customer]."
+- Bug Fix → "We have resolved an issue where [what the customer experienced]. [Confirmation that it is now fixed]."
+
+FORBIDDEN openers — never use these or similar:
+"We want", "We need", "We would like", "We plan", "This task", "This story", "This feature requires", "This bug", "The team", "In order to", "As a user", "This work item", "This change".
+
+ALWAYS:
+- Ignore all person names, @mentions, and assignee references in the raw description — do not include them.
+- No technical jargon, no sprint numbers, no ADO IDs, no internal terminology.
+- Suitable for direct inclusion in a customer release email or changelog.
+
+Respond ONLY with a valid JSON array, no markdown, no extra text:
+[{"id": <numeric id>, "desc": "<release note text>"}]`;
+
+    const input = JSON.stringify(allItems.map(it => ({
+      id: it.id,
+      type: it.type,
+      title: it.title,
+      rawDesc: it.desc.slice(0, 600),
+    })));
+
+    try {
+      const resp = await claudeFetch(config.claudeKey, systemPrompt, input);
+      const text = (resp.content?.[0]?.text || '').trim();
+      const match = text.match(/\[[\s\S]*\]/);
+      if (match) {
+        const descMap = {};
+        JSON.parse(match[0]).forEach(d => { if (d.id && d.desc) descMap[d.id] = d.desc; });
+        allItems.forEach(it => { if (descMap[it.id]) it.desc = descMap[it.id]; });
+      }
+    } catch (e) {
+      console.error('[IoT Cloud Release] Claude description error:', e.message);
+    }
+  }
+
+  progress('IoT Cloud Release data ready.');
+  return { userStories, bugs, total: ids.length, sprintNum: resolveActiveSprintNum() };
+}
+
+module.exports = { resolveActiveSprintNum, fetchOnHoldData, fetchResourceHoursData, fetchThreeWayData, fetchChildBugsData, fetchDatabaseEffortData, fetchDevQaEffortData, fetchDailyActivityData, fetchIoTDailyActivityData, fetchSprintHealthData, fetchInfoNeededData, fetchSprintBugAnalysisData, fetchMemberCapacityReport, fetchSprintList, fetchUpcomingSprintData, fetchSupportTicketsData, fetchIoTUpcomingReleaseData, fetchIoTCloudReleaseData };
