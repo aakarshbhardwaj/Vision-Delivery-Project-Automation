@@ -724,6 +724,8 @@ const server = http.createServer(async (req, res) => {
         ? `upcoming-sprint_${mode || 'upcoming'}_${todayStr}`
         : report === 'onhold'
         ? `onhold_${todayStr}`
+        : (report === 'child-bugs')
+        ? `child-bugs_${mode || 'current'}`
         : report;
 
       // these reports always fetch live from ADO (query changes per sprint)

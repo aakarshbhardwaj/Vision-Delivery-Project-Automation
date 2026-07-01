@@ -713,8 +713,8 @@ tr:last-child td { border-bottom: none; }
 .sh-total-cell { width: 64px; min-width: 64px; padding: 11px 6px;
   font-size: 14px; font-weight: 700; color: var(--text); cursor: pointer;
   background: rgba(255,255,255,.04); }
-.sh-total-cell:hover { color: #fff; background: rgba(255,255,255,.08); }
-.sh-grand { color: #fff; font-size: 15px; background: rgba(255,255,255,.06) !important; }
+.sh-total-cell:hover { color: var(--text); background: rgba(255,255,255,.08); }
+.sh-grand { color: var(--text); font-size: 15px; background: rgba(255,255,255,.06) !important; }
 
 /* Row separators + severity tints */
 .sh-table tbody tr { border-bottom: 1px solid var(--border); }
@@ -1179,6 +1179,18 @@ tr:last-child td { border-bottom: none; }
                    cursor:pointer;outline:none;font-weight:700;min-width:160px">
             <option value="upcoming">Upcoming</option>
             <option value="ongoing">Ongoing</option>
+          </select>
+        </div>
+        <!-- Sprint selector — only shown for IR US Related Child Bugs -->
+        <div id="cb-sprint-ctrl" style="display:none;align-items:center;gap:6px;margin-left:14px">
+          <span style="font-size:12px">🗓️</span>
+          <span style="font-size:11px;color:var(--muted);font-weight:600">Sprint:</span>
+          <select id="cb-sprint-sel" onchange="applyCbSprint()"
+            style="background:var(--surface2);border:1px solid var(--border);color:var(--accent);
+                   font-size:11px;font-family:inherit;border-radius:5px;padding:4px 10px;
+                   cursor:pointer;outline:none;font-weight:700;min-width:160px">
+            <option value="current">Current Sprint</option>
+            <option value="last">Last Sprint</option>
           </select>
         </div>
         <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
@@ -1896,6 +1908,17 @@ function selectReport(el) {
     uspCtrl.style.display = 'none';
   }
 
+  // Show/hide Current/Last sprint selector for IR US Related Child Bugs
+  const cbCtrl = document.getElementById('cb-sprint-ctrl');
+  if (key === 'child-bugs') {
+    cbCtrl.style.display = 'flex';
+    if (!window._cbSprint) window._cbSprint = 'current';
+    cbUpdateSprintLabels();          // seed labels from IR Release Calendar
+    document.getElementById('cb-sprint-sel').value = window._cbSprint;
+  } else {
+    cbCtrl.style.display = 'none';
+  }
+
   streamReportData(key);
 }
 
@@ -1910,6 +1933,8 @@ function refreshReport() {
     cacheKey = `resource-effort_${window._reSprint}`;
   else if (activeReport === 'upcoming-sprint')
     cacheKey = `upcoming-sprint_${window._uspMode || 'upcoming'}_${new Date().toISOString().slice(0,10)}`;
+  else if (activeReport === 'child-bugs')
+    cacheKey = `child-bugs_${window._cbSprint || 'current'}`;
   fetch(`/api/report-cache-clear?report=${encodeURIComponent(cacheKey)}`)
     .then(() => streamReportData(activeReport));
 }
@@ -1917,6 +1942,50 @@ function refreshReport() {
 function applyUspMode() {
   window._uspMode = document.getElementById('usp-sprint-sel').value;
   if (activeReport === 'upcoming-sprint') streamReportData('upcoming-sprint');
+}
+
+function applyCbSprint() {
+  window._cbSprint = document.getElementById('cb-sprint-sel').value;
+  if (activeReport === 'child-bugs') streamReportData('child-bugs');
+}
+
+// IR Release Calendar 2026 — used to label the Current/Last sprint options
+// when the live query iteration isn't yet known. Kept in sync with the same
+// calendar used elsewhere in the dashboard.
+const CB_IR_CAL = [
+  { num: '53.1', start: '2026-01-05' }, { num: '54.1', start: '2026-02-16' },
+  { num: '55.1', start: '2026-03-30' }, { num: '56.1', start: '2026-05-11' },
+  { num: '57.1', start: '2026-06-22' }, { num: '58.1', start: '2026-08-03' },
+  { num: '59.1', start: '2026-09-14' }, { num: '60.1', start: '2026-10-26' },
+  { num: '61.1', start: '2026-11-07' },
+];
+
+// Returns {current, last} sprint numbers from the IR Release Calendar for today.
+function cbCalendarSprintNums() {
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const started = CB_IR_CAL.filter(s => new Date(s.start + 'T00:00:00') <= now);
+  const curIdx  = started.length ? CB_IR_CAL.indexOf(started[started.length - 1]) : 0;
+  return {
+    current: CB_IR_CAL[curIdx] ? CB_IR_CAL[curIdx].num : '',
+    last:    CB_IR_CAL[curIdx - 1] ? CB_IR_CAL[curIdx - 1].num : '',
+  };
+}
+
+// Set the dropdown option labels to "Current Sprint <num>" / "Last Sprint <num>".
+// Optionally override one option with a sprint number derived from the query.
+function cbUpdateSprintLabels(queryMode, queryNum) {
+  const sel = document.getElementById('cb-sprint-sel');
+  if (!sel) return;
+  const cal = cbCalendarSprintNums();
+  // Remember query-derived numbers across calls so both options can stay exact.
+  window._cbNums = window._cbNums || {};
+  if (queryMode && queryNum) window._cbNums[queryMode] = queryNum;
+  const curNum  = (window._cbNums.current) || cal.current;
+  const lastNum = (window._cbNums.last)    || cal.last;
+  const curOpt  = sel.querySelector('option[value="current"]');
+  const lastOpt = sel.querySelector('option[value="last"]');
+  if (curOpt)  curOpt.textContent  = 'Current Sprint' + (curNum  ? ' ' + curNum  : '');
+  if (lastOpt) lastOpt.textContent = 'Last Sprint'    + (lastNum ? ' ' + lastNum : '');
 }
 
 function applyDaDate() {
@@ -2001,6 +2070,8 @@ function streamReportData(key) {
     ? `/api/report-data?report=${key}&sprintPath=${encodeURIComponent(window._reSprint)}`
     : (key === 'upcoming-sprint')
     ? `/api/report-data?report=${key}&mode=${window._uspMode || 'upcoming'}`
+    : (key === 'child-bugs')
+    ? `/api/report-data?report=${key}&mode=${window._cbSprint || 'current'}`
     : `/api/report-data?report=${key}`;
   const es = new EventSource(esUrl);
   activeEvtSrc = es;
@@ -2148,8 +2219,10 @@ window.rvOhFilter = function(q) {
 
 // ─ Three-Way Breakdown ────────────────────────────────────────────────────
 // ── US Related Child Bugs Report ─────────────────────────────────────────────
-function renderChildBugs({ bugs, bugTypes, weekLabels, sprintByType, weekByType, parentMap, totals, memberPivotList, fixedByDevList, zeroBugsDevList }) {
+function renderChildBugs({ bugs, bugTypes, weekLabels, sprintByType, weekByType, parentMap, totals, memberPivotList, fixedByDevList, zeroBugsDevList, sprintNum, mode }) {
   bugs = bugs || []; bugTypes = bugTypes || []; weekLabels = weekLabels || []; sprintByType = sprintByType || {}; weekByType = weekByType || {}; parentMap = parentMap || {}; memberPivotList = memberPivotList || []; fixedByDevList = fixedByDevList || []; zeroBugsDevList = zeroBugsDevList || [];
+  // Refine the selector label with the exact sprint number from the query iteration.
+  if (sprintNum) cbUpdateSprintLabels(mode || window._cbSprint || 'current', sprintNum);
   const body = document.getElementById('rv-body');
   window._cbAllBugs         = bugs;
   window._cbBugTypes        = bugTypes;
