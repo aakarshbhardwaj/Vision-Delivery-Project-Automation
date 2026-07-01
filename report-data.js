@@ -747,14 +747,23 @@ async function fetchThreeWayData(config, progress) {
 }
 
 // ── US-Related Child Bugs (Ongoing Sprint 56.1) ──────────────────────────────
-async function fetchChildBugsData(config, progress) {
+async function fetchChildBugsData(config, progress, params = {}) {
   const baseApi = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_apis`;
   const adoBase = `${config.org.replace(/\/$/, '')}/${encodeURIComponent(config.proj)}/_workitems/edit/`;
   // Shared Queries / IR Delivery Internal Reports / Weekly Alignment Call /
   // "Weekly Status Call- US Related Bugs" — a shared, links-type query the
   // dashboard PAT can read. (Replaces the old 61f5672b query, which was moved
   // to a personal folder and became inaccessible to the service PAT.)
-  const QUERY_ID = 'da28163f-cdb4-4ac9-8f8b-f10b5de7cb9a';
+  //
+  // Sprint selection (params.mode):
+  //   'current' (default) → live current-sprint query
+  //   'last'              → last-sprint query
+  // Both are shared, links-type queries readable by the dashboard PAT.
+  const QUERY_BY_MODE = {
+    current: 'da28163f-cdb4-4ac9-8f8b-f10b5de7cb9a',
+    last:    '6461741d-64c2-4bdb-aa37-18864061cf48',
+  };
+  const QUERY_ID = QUERY_BY_MODE[params.mode] || QUERY_BY_MODE.current;
 
   const emptyResult = { bugs: [], bugTypes: [], weekLabels: [], sprintByType: {}, weekByType: {}, parentMap: {}, totals: { total: 0, byBugType: {} } };
 
@@ -853,6 +862,10 @@ async function fetchChildBugsData(config, progress) {
     ? Object.entries(iterPaths.reduce((acc, p) => { acc[p] = (acc[p] || 0) + 1; return acc; }, {}))
         .sort((a, b) => b[1] - a[1])[0][0]
     : null;
+
+  // Sprint number for the selector label (e.g. "57.1"), taken from the query's
+  // dominant iteration path tail like "…\IR_R57_Sprint 57.1".
+  const sprintNum = iterPath ? (iterPath.match(/(\d+\.\d+)\s*$/) || [])[1] || '' : '';
 
   if (iterPath) {
     try {
@@ -977,7 +990,7 @@ async function fetchChildBugsData(config, progress) {
     .sort((a, b) => a.name.localeCompare(b.name));
 
   progress('Child Bugs data ready.');
-  return { bugs, bugTypes, weekLabels, sprintByType, weekByType, parentMap, totals, memberPivotList, fixedByDevList, zeroBugsDevList };
+  return { bugs, bugTypes, weekLabels, sprintByType, weekByType, parentMap, totals, memberPivotList, fixedByDevList, zeroBugsDevList, sprintNum, mode: params.mode || 'current' };
 }
 // ── Database Ticket Efforts ──────────────────────────────────────────────────
 
